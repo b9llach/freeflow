@@ -5,3 +5,6 @@ scipy
 pynput
 pyperclip
 torch
+fastapi
+uvicorn[standard]
+pydantic
