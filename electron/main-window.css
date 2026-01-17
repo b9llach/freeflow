@@ -494,14 +494,17 @@ body {
 /* Toggle Switch */
 .toggle-switch {
   position: relative;
+  display: inline-block;
   width: 44px;
   height: 26px;
+  flex-shrink: 0;
 }
 
 .toggle-switch input {
   opacity: 0;
   width: 0;
   height: 0;
+  position: absolute;
 }
 
 .toggle-slider {
@@ -511,7 +514,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.1);
+  background-color: #E5E5EA;
   border-radius: 26px;
   transition: 0.3s;
 }
@@ -526,7 +529,7 @@ body {
   background-color: #FFFFFF;
   border-radius: 50%;
   transition: 0.3s;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .toggle-switch input:checked + .toggle-slider {
