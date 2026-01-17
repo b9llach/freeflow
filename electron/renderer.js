@@ -11,8 +11,6 @@ const cancelSettingsBtn = document.getElementById('cancel-settings');
 const hotkeyInput = document.getElementById('hotkey-input');
 const currentHotkeySpan = document.getElementById('current-hotkey');
 const audioDeviceSelect = document.getElementById('audio-device');
-const transcriptContainer = document.getElementById('transcript-container');
-const transcriptText = document.getElementById('transcript-text');
 
 // State
 let config = {
@@ -66,16 +64,6 @@ function updateStatusDisplay(status) {
   };
 
   statusText.textContent = statusLabels[status] || status;
-
-  // Show/hide transcript container based on status
-  if (status === 'recording') {
-    transcriptContainer.classList.remove('hidden');
-    transcriptText.textContent = '';
-  } else if (status === 'ready' || status === 'error') {
-    transcriptContainer.classList.add('hidden');
-    transcriptText.textContent = '';
-  }
-  // Keep showing during 'transcribing' to display final result
 }
 
 function updateHotkeyDisplay() {
@@ -293,19 +281,6 @@ window.freeflow.onConfigUpdate((newConfig) => {
 // Paste text notification (for potential UI feedback)
 window.freeflow.onPasteText((text) => {
   console.log('Transcribed text:', text);
-  // Show final transcription briefly before hiding
-  if (text) {
-    transcriptText.textContent = text;
-  }
-});
-
-// Streaming partial transcript updates
-window.freeflow.onPartialTranscript((text) => {
-  if (text && transcriptText) {
-    transcriptText.textContent = text;
-    // Auto-scroll to bottom if content overflows
-    transcriptText.scrollTop = transcriptText.scrollHeight;
-  }
 });
 
 // === Push-to-Talk Key Release Detection ===

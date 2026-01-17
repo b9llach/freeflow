@@ -112,23 +112,10 @@ def broadcast_partial_transcript(text: str):
 
 
 def on_audio_chunk(chunk):
-    """Callback for processing audio chunks during streaming transcription."""
-    global current_partial_text
-
-    if not transcriber or not transcriber.is_ready():
-        return
-
-    if not is_recording:
-        return
-
-    # Process chunk through transcriber - returns full transcription of buffer so far
-    full_text = transcriber.transcribe_chunk(chunk, sample_rate=AudioCapture.SAMPLE_RATE)
-
-    # Broadcast if we got new/updated transcription
-    if full_text and full_text.strip() and full_text != current_partial_text:
-        current_partial_text = full_text.strip()
-        broadcast_partial_transcript(current_partial_text)
-        print(f"Live: {current_partial_text}")
+    """Callback for audio chunks - live transcription disabled for better quality."""
+    # Live transcription disabled - Parakeet model works best with full audio
+    # Just let audio accumulate and transcribe once at the end for best accuracy
+    pass
 
 
 @asynccontextmanager
@@ -336,14 +323,6 @@ def stop_recording() -> TranscriptionResult:
     duration = None
     if recording_start_time:
         duration = time.time() - recording_start_time
-
-    # Flush any remaining audio in streaming buffer for live view
-    if transcriber and transcriber.is_ready():
-        flush_text = transcriber.flush_streaming(sample_rate=AudioCapture.SAMPLE_RATE)
-        if flush_text and flush_text.strip():
-            current_partial_text = flush_text.strip()
-            broadcast_partial_transcript(current_partial_text)
-            print(f"Flush: {current_partial_text}")
 
     # Stop recording
     audio_data = audio.stop_recording()
@@ -659,14 +638,6 @@ def on_hotkey_release():
     duration = None
     if recording_start_time:
         duration = time.time() - recording_start_time
-
-    # Flush any remaining audio in streaming buffer for live view
-    if transcriber and transcriber.is_ready():
-        flush_text = transcriber.flush_streaming(sample_rate=AudioCapture.SAMPLE_RATE)
-        if flush_text and flush_text.strip():
-            current_partial_text = flush_text.strip()
-            broadcast_partial_transcript(current_partial_text)
-            print(f"Flush: {current_partial_text}")
 
     # Stop recording
     audio_data = audio.stop_recording()

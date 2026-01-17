@@ -377,17 +377,6 @@ function connectWebSocket() {
         // Update indicator window with new status
         indicatorWindow?.webContents.send('status-update', message.status);
 
-        // Resize indicator window based on recording state
-        if (indicatorWindow && !indicatorWindow.isDestroyed()) {
-          if (message.status === 'recording') {
-            // Expand window to show transcript
-            indicatorWindow.setSize(320, 180);
-          } else if (message.status === 'ready' || message.status === 'error') {
-            // Shrink back to normal size
-            indicatorWindow.setSize(200, 56);
-          }
-        }
-
         // Update local recording state
         if (message.is_recording !== undefined) {
           isRecording = message.is_recording;
@@ -398,9 +387,6 @@ function connectWebSocket() {
           mainWindow?.webContents.send('history-update');
           indicatorWindow?.webContents.send('paste-text', message.transcription);
         }
-      } else if (message.type === 'partial_transcript') {
-        // Send partial transcript to indicator window for live display
-        indicatorWindow?.webContents.send('partial-transcript', message.text);
       }
     } catch (e) {
       console.error('Failed to parse WebSocket message:', e);
@@ -602,7 +588,7 @@ function createIndicatorWindow() {
     backgroundColor: '#00000000',
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: true,  // Allow programmatic resize
+    resizable: false,
     hasShadow: false,
     focusable: false,  // Prevents stealing focus from other apps
     webPreferences: {
