@@ -102,15 +102,71 @@ function closeSetupWindow() {
   }
 }
 
+function getSetupConfigPath() {
+  return path.join(app.getPath('userData'), 'setup.json');
+}
+
+function readSetupConfig() {
+  try {
+    const configPath = getSetupConfigPath();
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    }
+  } catch (e) {
+    console.log('Could not read setup config:', e.message);
+  }
+  return {};
+}
+
+function writeSetupConfig(config) {
+  try {
+    const configPath = getSetupConfigPath();
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    console.log('Setup config saved to:', configPath);
+  } catch (e) {
+    console.log('Could not write setup config:', e.message);
+  }
+}
+
+async function checkPackageInstalled(pythonExe, packageName) {
+  return new Promise((resolve) => {
+    const proc = spawn(pythonExe, ['-m', 'pip', 'show', packageName], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    proc.on('close', (code) => {
+      resolve(code === 0);
+    });
+    proc.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
 async function ensureVenv(showSetup = false) {
   const paths = getPythonPaths();
   const venvPython = getVenvPython(paths.venvDir);
-  const depsMarker = path.join(paths.venvDir, '.deps_installed');
+  const setupConfig = readSetupConfig();
 
-  // Check if venv exists AND dependencies were installed successfully
-  if (fs.existsSync(venvPython) && fs.existsSync(depsMarker)) {
-    console.log('Virtual environment found with dependencies');
-    return { python: venvPython, needsSetup: false };
+  // Check if venv python exists
+  if (fs.existsSync(venvPython)) {
+    // Check config file first (fast path)
+    if (setupConfig.depsInstalled) {
+      console.log('Dependencies already installed (config flag set)');
+      return { python: venvPython, needsSetup: false };
+    }
+
+    // Config flag missing - verify by checking if a key package is installed
+    console.log('Checking if dependencies are already installed...');
+    const fastApiInstalled = await checkPackageInstalled(venvPython, 'fastapi');
+
+    if (fastApiInstalled) {
+      console.log('Dependencies already installed (fastapi found)');
+      // Save to config so we skip this check next time
+      writeSetupConfig({ ...setupConfig, depsInstalled: true, installedAt: new Date().toISOString() });
+      return { python: venvPython, needsSetup: false };
+    }
+
+    console.log('Dependencies not found, will install...');
   }
 
   // Need to setup - show setup window if requested
@@ -181,8 +237,8 @@ async function ensureVenv(showSetup = false) {
     proc.on('error', reject);
   });
 
-  // Create marker file to indicate successful installation
-  fs.writeFileSync(depsMarker, new Date().toISOString());
+  // Save to config to indicate successful installation
+  writeSetupConfig({ depsInstalled: true, installedAt: new Date().toISOString() });
 
   console.log('Dependencies installed');
   sendSetupStatus('Dependencies installed', 'Starting application...');
@@ -537,8 +593,8 @@ function createIndicatorWindow() {
     }
   });
 
-  // Set to floating level (above normal windows)
-  indicatorWindow.setAlwaysOnTop(true, 'floating');
+  // Set to screen-saver level (highest, truly always on top)
+  indicatorWindow.setAlwaysOnTop(true, 'screen-saver');
 
   indicatorWindow.loadFile(path.join(__dirname, 'index.html'));
 
@@ -552,6 +608,13 @@ function createIndicatorWindow() {
   indicatorWindow.on('closed', () => {
     indicatorWindow = null;
   });
+
+  // Periodically re-assert always on top (Windows sometimes loses it)
+  setInterval(() => {
+    if (indicatorWindow && !indicatorWindow.isDestroyed()) {
+      indicatorWindow.setAlwaysOnTop(true, 'screen-saver');
+    }
+  }, 5000);
 }
 
 function createMainWindow() {
