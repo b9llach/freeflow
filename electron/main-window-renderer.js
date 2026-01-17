@@ -7,6 +7,7 @@ const tabPanels = document.querySelectorAll('.tab-panel');
 // DOM Elements - History
 const historyList = document.getElementById('history-list');
 const statsTotal = document.getElementById('stats-total');
+const statsWords = document.getElementById('stats-words');
 const statsChars = document.getElementById('stats-chars');
 const btnClearHistory = document.getElementById('btn-clear-history');
 
@@ -80,6 +81,7 @@ async function loadHistory() {
 function renderHistory(entries, stats) {
   // Update stats
   statsTotal.textContent = `${stats.total_entries} transcriptions`;
+  statsWords.textContent = `${(stats.total_words || 0).toLocaleString()} words`;
   statsChars.textContent = `${stats.total_characters.toLocaleString()} characters`;
 
   if (entries.length === 0) {

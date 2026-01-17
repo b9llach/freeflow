@@ -124,9 +124,14 @@ def get_history_stats() -> Dict[str, Any]:
         len(entry.get("final_text", ""))
         for entry in history
     )
+    total_words = sum(
+        len(entry.get("final_text", "").split())
+        for entry in history
+    )
 
     return {
         "total_entries": total_entries,
         "total_duration_seconds": total_duration,
-        "total_characters": total_characters
+        "total_characters": total_characters,
+        "total_words": total_words
     }
