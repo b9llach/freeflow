@@ -6,10 +6,12 @@ A local speech-to-text dictation tool that captures speech, transcribes it using
 
 - **Local transcription** - Uses NVIDIA's parakeet-tdt-0.6b-v2 model, no cloud API needed
 - **Push-to-talk or Toggle mode** - Hold hotkey to record, or press once to start/stop
-- **Configurable hotkey** - Set any key combination with left/right modifier distinction
-- **Instant paste** - Transcribed text is pasted instantly via clipboard
-- **Cross-platform UI** - Electron-based floating indicator window
-- **Native performance** - Python backend handles audio capture and transcription
+- **Configurable hotkey** - Set any key combination including modifier-only keys (e.g., Right Ctrl)
+- **Instant paste** - Transcribed text is automatically pasted via Ctrl+V simulation
+- **Transcription history** - View and copy all previous transcriptions
+- **Word replacements** - Auto-replace words/phrases (e.g., "omw" -> "on my way")
+- **Real-time status** - WebSocket-based instant UI updates
+- **Premium UI** - Apple-inspired design with floating indicator and main window
 
 ## Architecture
 
@@ -102,20 +104,36 @@ On the first run, FreeFlow will download the Parakeet model from NVIDIA (~600MB)
 3. Open any text editor or input field
 4. Press and hold the hotkey (default: `LCtrl+LShift+Space`) to record
 5. Speak into your microphone
-6. Release the hotkey - your speech will be transcribed and pasted
+6. Release the hotkey - your speech will be transcribed and pasted automatically
 
-### Floating Window
+### Windows
 
-- **Drag** to reposition
-- **Right-click** to access Settings
+FreeFlow has two windows:
+
+**Floating Indicator** - Always-on-top status display
+- Shows current status (Ready, Recording, Transcribing)
+- Displays the current hotkey
+- Drag to reposition
+
+**Main Window** - Full application interface
+- **History tab** - View all past transcriptions, copy text
+- **Replacements tab** - Add word/phrase auto-replacements
+- **Settings tab** - Configure hotkey, activation mode, audio device
 
 ### Settings
 
-Right-click the floating window to:
+In the Settings tab you can:
 
-- Change the hotkey (with left/right modifier support)
+- Change the hotkey (supports modifier-only keys like Right Ctrl)
 - Switch between Push-to-Talk and Toggle mode
 - Select audio input device
+
+### Replacements
+
+Set up automatic word/phrase replacements:
+- "omw" -> "on my way"
+- "brb" -> "be right back"
+- Case-sensitive and whole-word options available
 
 ## Configuration
 
@@ -147,11 +165,17 @@ When running, the Python backend exposes these endpoints at `http://127.0.0.1:50
 |----------|--------|-------------|
 | `/health` | GET | Health check |
 | `/status` | GET | Get current status |
+| `/ws` | WebSocket | Real-time status updates |
 | `/recording/start` | POST | Start recording |
 | `/recording/stop` | POST | Stop and transcribe |
 | `/recording/cancel` | POST | Cancel recording |
 | `/config` | GET/POST | Get or save config |
 | `/audio-devices` | GET | List audio devices |
+| `/history` | GET | Get transcription history |
+| `/history/clear` | POST | Clear all history |
+| `/replacements` | GET/POST | Get or add replacements |
+| `/replacements/{id}` | PUT/DELETE | Update or delete replacement |
+| `/paste` | POST | Simulate Ctrl+V paste |
 
 ## Troubleshooting
 
@@ -177,37 +201,72 @@ Check the developer tools (Ctrl+Shift+I) for errors.
 
 ```
 freeflow/
-├── electron/                # Electron frontend
-│   ├── main.js              # Main process
-│   ├── preload.js           # IPC bridge
-│   ├── index.html           # UI markup
-│   ├── styles.css           # Styling
-│   ├── renderer.js          # UI logic
-│   └── package.json         # Electron dependencies
-├── api.py                   # FastAPI backend
-├── audio_capture.py         # Microphone recording
-├── transcriber.py           # NeMo model wrapper
-├── keyboard_output.py       # Text pasting
-├── hotkey_manager.py        # Global hotkey handling
-├── config.py                # Configuration management
-├── main.py                  # Python-only entry (tkinter)
-├── gui.py                   # Tkinter floating window
-├── settings_dialog.py       # Tkinter settings UI
-└── requirements.txt         # Python dependencies
+├── electron/                    # Electron frontend
+│   ├── main.js                  # Main process
+│   ├── preload.js               # IPC bridge
+│   ├── index.html               # Floating indicator markup
+│   ├── styles.css               # Floating indicator styles
+│   ├── renderer.js              # Floating indicator logic
+│   ├── main-window.html         # Main window markup
+│   ├── main-window.css          # Main window styles
+│   ├── main-window-renderer.js  # Main window logic
+│   ├── assets/                  # App icons
+│   └── package.json             # Electron dependencies
+├── api.py                       # FastAPI backend with WebSocket
+├── audio_capture.py             # Microphone recording
+├── transcriber.py               # NeMo model wrapper
+├── hotkey_manager.py            # Global hotkey handling
+├── history.py                   # Transcription history storage
+├── replacements.py              # Word/phrase replacement rules
+├── config.py                    # Configuration management
+├── main.py                      # Python-only entry (tkinter)
+└── requirements.txt             # Python dependencies
 ```
 
 ## Building for Distribution
 
-(Coming soon)
+The app can be packaged into a standalone executable that bundles the Python source code. On first run, it will create a virtual environment and install dependencies automatically.
 
-The Electron app can be packaged for distribution using electron-builder:
+### Prerequisites
+
+- Python 3.10 or 3.11 must be installed and in PATH on the target system
+- Node.js 18+ for building
+
+### Build Steps
 
 ```bash
+# 1. Install Electron dependencies
 cd electron
-npm run build:win   # Windows
-npm run build:mac   # macOS
-npm run build:linux # Linux
+npm install
+
+# 2. Build for your platform
+npm run build:win   # Windows (.exe installer)
+npm run build:mac   # macOS (.dmg)
+npm run build:linux # Linux (.AppImage)
 ```
+
+### Output
+
+After building, you'll find:
+
+- `electron/dist/FreeFlow Setup X.X.X.exe` - Windows installer
+- `electron/dist/win-unpacked/` - Portable version (no install needed)
+
+### Running the Built App
+
+**Option 1: Install via Setup**
+Run `FreeFlow Setup X.X.X.exe` to install to Program Files with Start Menu shortcut.
+
+**Option 2: Portable**
+Run `electron/dist/win-unpacked/FreeFlow.exe` directly.
+
+**First Run:**
+On first launch, the app will:
+1. Create a Python virtual environment in the resources folder
+2. Install all Python dependencies (~2-5 minutes)
+3. Download the Parakeet model (~600MB)
+
+Subsequent launches will start immediately.
 
 ## License
 

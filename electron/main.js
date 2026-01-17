@@ -7,6 +7,7 @@ const WebSocket = require('ws');
 // Keep references to prevent garbage collection
 let mainWindow = null;
 let indicatorWindow = null;
+let setupWindow = null;
 let tray = null;
 let pythonProcess = null;
 
@@ -63,7 +64,45 @@ function getVenvPython(venvDir) {
 
 const fs = require('fs');
 
-async function ensureVenv() {
+function sendSetupStatus(status, details = '', progress = undefined) {
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    setupWindow.webContents.send('setup-status', { status, details, progress });
+  }
+}
+
+function createSetupWindow() {
+  setupWindow = new BrowserWindow({
+    width: 450,
+    height: 300,
+    frame: false,
+    transparent: false,
+    resizable: false,
+    center: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: false,
+      nodeIntegration: true
+    }
+  });
+
+  setupWindow.loadFile(path.join(__dirname, 'setup.html'));
+
+  setupWindow.once('ready-to-show', () => {
+    setupWindow.show();
+  });
+
+  return setupWindow;
+}
+
+function closeSetupWindow() {
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    setupWindow.close();
+    setupWindow = null;
+  }
+}
+
+async function ensureVenv(showSetup = false) {
   const paths = getPythonPaths();
   const venvPython = getVenvPython(paths.venvDir);
   const depsMarker = path.join(paths.venvDir, '.deps_installed');
@@ -71,19 +110,30 @@ async function ensureVenv() {
   // Check if venv exists AND dependencies were installed successfully
   if (fs.existsSync(venvPython) && fs.existsSync(depsMarker)) {
     console.log('Virtual environment found with dependencies');
-    return venvPython;
+    return { python: venvPython, needsSetup: false };
+  }
+
+  // Need to setup - show setup window if requested
+  if (showSetup) {
+    createSetupWindow();
+    await new Promise(resolve => setTimeout(resolve, 500)); // Let window render
   }
 
   // Create venv if it doesn't exist
   if (!fs.existsSync(venvPython)) {
     console.log('Creating virtual environment...');
+    sendSetupStatus('Creating Python environment...', 'Setting up virtual environment');
 
     await new Promise((resolve, reject) => {
       const proc = spawn(paths.systemPython, ['-m', 'venv', paths.venvDir], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
-      proc.stdout.on('data', (data) => console.log(`[venv] ${data.toString().trim()}`));
-      proc.stderr.on('data', (data) => console.error(`[venv] ${data.toString().trim()}`));
+      proc.stdout.on('data', (data) => {
+        console.log(`[venv] ${data.toString().trim()}`);
+      });
+      proc.stderr.on('data', (data) => {
+        console.error(`[venv] ${data.toString().trim()}`);
+      });
       proc.on('close', (code) => {
         if (code === 0) resolve();
         else reject(new Error(`venv creation failed with code ${code}`));
@@ -93,6 +143,7 @@ async function ensureVenv() {
   }
 
   console.log('Installing dependencies (this may take a while on first run)...');
+  sendSetupStatus('Installing dependencies...', 'This may take a few minutes');
 
   // Install requirements
   await new Promise((resolve, reject) => {
@@ -100,8 +151,29 @@ async function ensureVenv() {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: paths.pythonDir
     });
-    proc.stdout.on('data', (data) => console.log(`[pip] ${data.toString().trim()}`));
-    proc.stderr.on('data', (data) => console.error(`[pip] ${data.toString().trim()}`));
+
+    proc.stdout.on('data', (data) => {
+      const line = data.toString().trim();
+      console.log(`[pip] ${line}`);
+      // Extract package name from pip output
+      const match = line.match(/(?:Collecting|Installing|Downloading)\s+(\S+)/i);
+      if (match) {
+        sendSetupStatus('Installing dependencies...', match[1]);
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      const line = data.toString().trim();
+      console.error(`[pip] ${line}`);
+      // Also check stderr for progress (pip sometimes outputs there)
+      if (line.includes('Collecting') || line.includes('Installing')) {
+        const match = line.match(/(?:Collecting|Installing)\s+(\S+)/i);
+        if (match) {
+          sendSetupStatus('Installing dependencies...', match[1]);
+        }
+      }
+    });
+
     proc.on('close', (code) => {
       if (code === 0) resolve();
       else reject(new Error(`pip install failed with code ${code}`));
@@ -113,7 +185,9 @@ async function ensureVenv() {
   fs.writeFileSync(depsMarker, new Date().toISOString());
 
   console.log('Dependencies installed');
-  return venvPython;
+  sendSetupStatus('Dependencies installed', 'Starting application...');
+
+  return { python: venvPython, needsSetup: true };
 }
 
 async function startPythonAPI() {
@@ -130,9 +204,17 @@ async function startPythonAPI() {
     pythonExe = paths.systemPython;
   } else {
     try {
-      pythonExe = await ensureVenv();
+      const result = await ensureVenv(true); // Show setup window in production
+      pythonExe = result.python;
+
+      // Close setup window after a brief delay to show "Starting application..."
+      if (result.needsSetup) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      closeSetupWindow();
     } catch (err) {
       console.error('Failed to setup Python environment:', err);
+      sendSetupStatus('Setup failed', err.message);
       return;
     }
   }
