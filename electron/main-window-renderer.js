@@ -112,12 +112,20 @@ function renderHistory(entries, stats) {
           </div>
         ` : ''}
         <div class="history-actions">
-          <button class="btn btn-secondary btn-sm" onclick="copyToClipboard('${escapeHtml(entry.final_text).replace(/'/g, "\\'")}')">Copy</button>
-          <button class="btn btn-icon" onclick="deleteHistoryEntry(${entry.id})">Delete</button>
+          <button class="btn btn-secondary btn-sm btn-copy" data-text="${escapeHtml(entry.final_text).replace(/"/g, '&quot;')}">Copy</button>
+          <button class="btn btn-icon btn-delete-history" data-id="${entry.id}">Delete</button>
         </div>
       </div>
     `;
   }).join('');
+
+  // Attach event listeners
+  historyList.querySelectorAll('.btn-copy').forEach(btn => {
+    btn.addEventListener('click', () => copyToClipboard(btn.dataset.text));
+  });
+  historyList.querySelectorAll('.btn-delete-history').forEach(btn => {
+    btn.addEventListener('click', () => deleteHistoryEntry(parseInt(btn.dataset.id)));
+  });
 }
 
 async function deleteHistoryEntry(id) {
@@ -170,8 +178,7 @@ function renderReplacements(replacements) {
       <div class="replacement-item ${rule.enabled ? '' : 'disabled'}" data-id="${rule.id}">
         <div class="replacement-toggle">
           <label class="toggle-switch">
-            <input type="checkbox" ${rule.enabled ? 'checked' : ''}
-                   onchange="toggleReplacement('${rule.id}', this.checked)">
+            <input type="checkbox" class="replacement-toggle-input" ${rule.enabled ? 'checked' : ''} data-id="${rule.id}">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -188,15 +195,43 @@ function renderReplacements(replacements) {
           ` : ''}
         </div>
         <div class="replacement-actions">
-          <button class="btn btn-icon" onclick="editReplacement('${rule.id}')">Edit</button>
-          <button class="btn btn-icon" onclick="deleteReplacement('${rule.id}')">Delete</button>
+          <button class="btn btn-icon btn-edit" data-id="${rule.id}">Edit</button>
+          <button class="btn btn-icon btn-delete" data-id="${rule.id}">Delete</button>
         </div>
       </div>
     `;
   }).join('');
+
+  // Attach event listeners using delegation
+  const editBtns = replacementsList.querySelectorAll('.btn-edit');
+  const deleteBtns = replacementsList.querySelectorAll('.btn-delete');
+  const toggleInputs = replacementsList.querySelectorAll('.replacement-toggle-input');
+
+  console.log('Attaching listeners:', editBtns.length, 'edit,', deleteBtns.length, 'delete,', toggleInputs.length, 'toggle');
+
+  editBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      console.log('Edit clicked:', btn.dataset.id);
+      editReplacement(btn.dataset.id);
+    });
+  });
+  deleteBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      console.log('Delete clicked:', btn.dataset.id);
+      deleteReplacement(btn.dataset.id);
+    });
+  });
+  toggleInputs.forEach(input => {
+    input.addEventListener('change', () => {
+      console.log('Toggle changed:', input.dataset.id, input.checked);
+      toggleReplacement(input.dataset.id, input.checked);
+    });
+  });
 }
 
 function openReplacementModal(rule = null) {
+  console.log('openReplacementModal called with rule:', rule);
+  console.log('replacementModal element:', replacementModal);
   if (rule) {
     modalTitle.textContent = 'Edit Replacement Rule';
     editingReplacementId = rule.id;
@@ -212,7 +247,9 @@ function openReplacementModal(rule = null) {
     inputWholeWord.checked = true;
     inputCaseSensitive.checked = false;
   }
+  console.log('Removing hidden class from modal');
   replacementModal.classList.remove('hidden');
+  console.log('Modal classList after:', replacementModal.classList);
   inputFind.focus();
 }
 
@@ -252,9 +289,12 @@ async function saveReplacement() {
 }
 
 async function editReplacement(id) {
+  console.log('editReplacement called with id:', id);
   try {
     const data = await window.freeflow.getReplacements();
+    console.log('Got replacements data:', data);
     const rule = data.replacements.find(r => r.id === id);
+    console.log('Found rule:', rule);
     if (rule) {
       openReplacementModal(rule);
     }
@@ -493,17 +533,17 @@ function copyToClipboard(text) {
   });
 }
 
-// Make functions available globally for inline handlers
-window.deleteHistoryEntry = deleteHistoryEntry;
-window.copyToClipboard = copyToClipboard;
-window.editReplacement = editReplacement;
-window.toggleReplacement = toggleReplacement;
-window.deleteReplacement = deleteReplacement;
+// Note: Event listeners are now attached directly in render functions
+// No need for global window exports since we don't use inline onclick handlers
 
 // === Initialization ===
 
 async function init() {
+  console.log('Main window renderer initializing...');
+  console.log('replacementModal element:', replacementModal);
+  console.log('confirmModal element:', confirmModal);
   await loadHistory();
+  console.log('Main window renderer initialized');
 }
 
 init();
