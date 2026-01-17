@@ -275,14 +275,24 @@ class FloatingWindow:
         formatted_keys = []
         for key in self._hotkey:
             key_lower = key.lower()
-            if key_lower in ("ctrl", "ctrl_l", "ctrl_r"):
-                formatted_keys.append("Ctrl")
-            elif key_lower in ("shift", "shift_l", "shift_r"):
-                formatted_keys.append("Shift")
-            elif key_lower in ("alt", "alt_l", "alt_r"):
-                formatted_keys.append("Alt")
-            elif key_lower in ("cmd", "win"):
+            if key_lower == "ctrl_l":
+                formatted_keys.append("LCtrl")
+            elif key_lower == "ctrl_r":
+                formatted_keys.append("RCtrl")
+            elif key_lower == "shift_l":
+                formatted_keys.append("LShift")
+            elif key_lower == "shift_r":
+                formatted_keys.append("RShift")
+            elif key_lower == "alt_l":
+                formatted_keys.append("LAlt")
+            elif key_lower == "alt_r":
+                formatted_keys.append("RAlt")
+            elif key_lower == "alt_gr":
+                formatted_keys.append("AltGr")
+            elif key_lower in ("cmd", "cmd_l"):
                 formatted_keys.append("Win")
+            elif key_lower == "cmd_r":
+                formatted_keys.append("RWin")
             elif key_lower == "space":
                 formatted_keys.append("Space")
             else:

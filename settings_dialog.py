@@ -285,14 +285,24 @@ class SettingsDialog:
         formatted = []
         for key in hotkey:
             key_lower = key.lower()
-            if key_lower in ("ctrl", "ctrl_l", "ctrl_r"):
-                formatted.append("Ctrl")
-            elif key_lower in ("shift", "shift_l", "shift_r"):
-                formatted.append("Shift")
-            elif key_lower in ("alt", "alt_l", "alt_r"):
-                formatted.append("Alt")
-            elif key_lower in ("cmd", "win"):
+            if key_lower == "ctrl_l":
+                formatted.append("LCtrl")
+            elif key_lower == "ctrl_r":
+                formatted.append("RCtrl")
+            elif key_lower == "shift_l":
+                formatted.append("LShift")
+            elif key_lower == "shift_r":
+                formatted.append("RShift")
+            elif key_lower == "alt_l":
+                formatted.append("LAlt")
+            elif key_lower == "alt_r":
+                formatted.append("RAlt")
+            elif key_lower == "alt_gr":
+                formatted.append("AltGr")
+            elif key_lower in ("cmd", "cmd_l"):
                 formatted.append("Win")
+            elif key_lower == "cmd_r":
+                formatted.append("RWin")
             elif key_lower == "space":
                 formatted.append("Space")
             else:

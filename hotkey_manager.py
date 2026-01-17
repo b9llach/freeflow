@@ -9,22 +9,20 @@ from pynput.keyboard import Key, KeyCode
 
 # Mapping from string names to pynput keys
 KEY_MAP = {
-    "ctrl": Key.ctrl_l,
     "ctrl_l": Key.ctrl_l,
     "ctrl_r": Key.ctrl_r,
-    "shift": Key.shift_l,
     "shift_l": Key.shift_l,
     "shift_r": Key.shift_r,
-    "alt": Key.alt_l,
     "alt_l": Key.alt_l,
     "alt_r": Key.alt_r,
+    "alt_gr": Key.alt_gr,
     "cmd": Key.cmd,
-    "win": Key.cmd,
+    "cmd_l": Key.cmd_l,
+    "cmd_r": Key.cmd_r,
     "space": Key.space,
     "tab": Key.tab,
     "enter": Key.enter,
     "esc": Key.esc,
-    "escape": Key.esc,
     "backspace": Key.backspace,
     "delete": Key.delete,
     "insert": Key.insert,
@@ -50,8 +48,46 @@ KEY_MAP = {
     "f12": Key.f12,
 }
 
-# Reverse mapping from Key to string
-KEY_TO_STRING = {v: k for k, v in KEY_MAP.items()}
+# Reverse mapping from Key to string (explicit to ensure correct names)
+KEY_TO_STRING = {
+    Key.ctrl_l: "ctrl_l",
+    Key.ctrl_r: "ctrl_r",
+    Key.shift_l: "shift_l",
+    Key.shift_r: "shift_r",
+    Key.alt_l: "alt_l",
+    Key.alt_r: "alt_r",
+    Key.alt_gr: "alt_gr",
+    Key.cmd: "cmd",
+    Key.cmd_l: "cmd_l",
+    Key.cmd_r: "cmd_r",
+    Key.space: "space",
+    Key.tab: "tab",
+    Key.enter: "enter",
+    Key.esc: "esc",
+    Key.backspace: "backspace",
+    Key.delete: "delete",
+    Key.insert: "insert",
+    Key.home: "home",
+    Key.end: "end",
+    Key.page_up: "page_up",
+    Key.page_down: "page_down",
+    Key.up: "up",
+    Key.down: "down",
+    Key.left: "left",
+    Key.right: "right",
+    Key.f1: "f1",
+    Key.f2: "f2",
+    Key.f3: "f3",
+    Key.f4: "f4",
+    Key.f5: "f5",
+    Key.f6: "f6",
+    Key.f7: "f7",
+    Key.f8: "f8",
+    Key.f9: "f9",
+    Key.f10: "f10",
+    Key.f11: "f11",
+    Key.f12: "f12",
+}
 
 
 def parse_key(key_str: str) -> Optional[keyboard.Key | KeyCode]:
@@ -102,22 +138,16 @@ def key_to_string(key: keyboard.Key | KeyCode) -> str:
 
 
 def normalize_key(key: keyboard.Key | KeyCode) -> keyboard.Key | KeyCode:
-    """Normalize a key (e.g., treat left and right ctrl as the same).
+    """Return the key as-is (no normalization).
+
+    Left and right modifiers are treated as distinct keys.
 
     Args:
         key: The key to normalize.
 
     Returns:
-        Normalized key.
+        The key unchanged.
     """
-    # Normalize left/right variants of modifier keys
-    if key in (Key.ctrl_l, Key.ctrl_r):
-        return Key.ctrl_l
-    if key in (Key.shift_l, Key.shift_r):
-        return Key.shift_l
-    if key in (Key.alt_l, Key.alt_r, Key.alt_gr):
-        return Key.alt_l
-
     return key
 
 

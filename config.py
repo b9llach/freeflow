@@ -11,7 +11,7 @@ MODE_PUSH_TO_TALK = "push_to_talk"
 MODE_TOGGLE = "toggle"
 
 DEFAULT_CONFIG = {
-    "hotkey": ["ctrl", "shift", "space"],
+    "hotkey": ["ctrl_l", "shift_l", "space"],
     "activation_mode": MODE_PUSH_TO_TALK,  # "push_to_talk" or "toggle"
     "window_position": [100, 100],
     "audio_device": None,
