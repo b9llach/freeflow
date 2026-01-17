@@ -36,11 +36,10 @@
     ],
     "extraResources": [
       {
-        "from": "../",
+        "from": "../python",
         "to": "python",
         "filter": [
-          "*.py",
-          "requirements.txt"
+          "**/*"
         ]
       }
     ],

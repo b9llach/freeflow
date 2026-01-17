@@ -1,30 +1,45 @@
 """Audio capture from microphone using sounddevice."""
 
 import threading
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 import sounddevice as sd
 
 
 class AudioCapture:
-    """Handles microphone audio recording."""
+    """Handles microphone audio recording with streaming support."""
 
     SAMPLE_RATE = 16000  # 16kHz for speech recognition
     CHANNELS = 1  # Mono
     DTYPE = np.float32
+    CHUNK_SIZE = 1024  # Samples per callback
 
-    def __init__(self, device_index: Optional[int] = None):
+    def __init__(
+        self,
+        device_index: Optional[int] = None,
+        on_audio_chunk: Optional[Callable[[np.ndarray], None]] = None,
+    ):
         """Initialize the audio capture.
 
         Args:
             device_index: Specific input device index, or None for default.
+            on_audio_chunk: Callback called with each new audio chunk during recording.
         """
         self.device_index = device_index
+        self.on_audio_chunk = on_audio_chunk
         self._recording = False
         self._audio_buffer: List[np.ndarray] = []
         self._lock = threading.Lock()
         self._stream: Optional[sd.InputStream] = None
+
+    def set_chunk_callback(self, callback: Optional[Callable[[np.ndarray], None]]) -> None:
+        """Set the callback for audio chunks.
+
+        Args:
+            callback: Function called with each new audio chunk, or None to disable.
+        """
+        self.on_audio_chunk = callback
 
     def start_recording(self) -> bool:
         """Start recording from the microphone.
@@ -45,7 +60,7 @@ class AudioCapture:
                 dtype=self.DTYPE,
                 device=self.device_index,
                 callback=self._audio_callback,
-                blocksize=1024,
+                blocksize=self.CHUNK_SIZE,
             )
             self._stream.start()
             self._recording = True
@@ -91,6 +106,25 @@ class AudioCapture:
         print(f"Recording stopped. Captured {len(audio_data)} samples ({len(audio_data) / self.SAMPLE_RATE:.2f}s)")
         return audio_data
 
+    def get_current_buffer(self) -> Optional[np.ndarray]:
+        """Get the current audio buffer without stopping recording.
+
+        Returns:
+            Copy of current audio buffer, or None if empty.
+        """
+        with self._lock:
+            if not self._audio_buffer:
+                return None
+
+            # Concatenate all audio chunks
+            audio_data = np.concatenate(self._audio_buffer, axis=0)
+
+        # Flatten to 1D if needed
+        if len(audio_data.shape) > 1:
+            audio_data = audio_data.flatten()
+
+        return audio_data
+
     def _audio_callback(
         self,
         indata: np.ndarray,
@@ -110,8 +144,19 @@ class AudioCapture:
             print(f"Audio callback status: {status}")
 
         if self._recording:
+            chunk = indata.copy()
+
             with self._lock:
-                self._audio_buffer.append(indata.copy())
+                self._audio_buffer.append(chunk)
+
+            # Call the chunk callback if set
+            if self.on_audio_chunk:
+                # Flatten for the callback
+                flat_chunk = chunk.flatten() if len(chunk.shape) > 1 else chunk
+                try:
+                    self.on_audio_chunk(flat_chunk)
+                except Exception as e:
+                    print(f"Error in audio chunk callback: {e}")
 
     def is_recording(self) -> bool:
         """Check if currently recording."""

@@ -10,8 +10,9 @@ A local speech-to-text dictation tool that captures speech, transcribes it using
 - **Instant paste** - Transcribed text is automatically pasted via Ctrl+V simulation
 - **Transcription history** - View and copy all previous transcriptions
 - **Word replacements** - Auto-replace words/phrases (e.g., "omw" -> "on my way")
+- **Live transcription** - See words appear as you speak
 - **Real-time status** - WebSocket-based instant UI updates
-- **Premium UI** - Apple-inspired design with floating indicator and main window
+- **Premium UI** - Apple-inspired frosted glass design with floating indicator
 
 ## Architecture
 
@@ -49,7 +50,7 @@ python -m venv .venv
 # macOS/Linux
 source .venv/bin/activate
 
-pip install -r requirements.txt
+pip install -r python/requirements.txt
 ```
 
 Note: The first install may take a while as it downloads PyTorch and NeMo.
@@ -72,19 +73,11 @@ cd electron
 npm start
 ```
 
-### Option 2: Run Python standalone (tkinter UI)
-
-For the original Python-only version with tkinter UI:
-
-```bash
-python main.py
-```
-
-### Option 3: Run components separately (development)
+### Option 2: Run components separately (development)
 
 Terminal 1 - Start Python API:
 ```bash
-python api.py
+python python/api.py
 ```
 
 Terminal 2 - Start Electron:
@@ -210,17 +203,19 @@ freeflow/
 │   ├── main-window.html         # Main window markup
 │   ├── main-window.css          # Main window styles
 │   ├── main-window-renderer.js  # Main window logic
+│   ├── setup.html               # First-run setup screen
 │   ├── assets/                  # App icons
 │   └── package.json             # Electron dependencies
-├── api.py                       # FastAPI backend with WebSocket
-├── audio_capture.py             # Microphone recording
-├── transcriber.py               # NeMo model wrapper
-├── hotkey_manager.py            # Global hotkey handling
-├── history.py                   # Transcription history storage
-├── replacements.py              # Word/phrase replacement rules
-├── config.py                    # Configuration management
-├── main.py                      # Python-only entry (tkinter)
-└── requirements.txt             # Python dependencies
+├── python/                      # Python backend
+│   ├── api.py                   # FastAPI server with WebSocket
+│   ├── audio_capture.py         # Microphone recording
+│   ├── transcriber.py           # NeMo model wrapper
+│   ├── hotkey_manager.py        # Global hotkey handling
+│   ├── history.py               # Transcription history storage
+│   ├── replacements.py          # Word/phrase replacement rules
+│   ├── config.py                # Configuration management
+│   └── requirements.txt         # Python dependencies
+└── README.md
 ```
 
 ## Building for Distribution
@@ -262,11 +257,12 @@ Run `electron/dist/win-unpacked/FreeFlow.exe` directly.
 
 **First Run:**
 On first launch, the app will:
-1. Create a Python virtual environment in the resources folder
-2. Install all Python dependencies (~2-5 minutes)
-3. Download the Parakeet model (~600MB)
+1. Show a setup screen while installing dependencies
+2. Create a Python virtual environment in `%APPDATA%\FreeFlow`
+3. Install all Python dependencies (~2-5 minutes)
+4. Download the Parakeet model (~600MB)
 
-Subsequent launches will start immediately.
+Subsequent launches will start immediately since the venv persists in AppData.
 
 ## License
 

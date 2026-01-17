@@ -51,6 +51,7 @@ audio: Optional[AudioCapture] = None
 hotkey_manager: Optional[HotkeyManager] = None
 is_recording = False
 recording_start_time: Optional[float] = None
+current_partial_text = ""  # Current streaming transcription text
 
 
 # WebSocket connection manager
@@ -104,6 +105,32 @@ def broadcast_status(status: str, extra: dict = None):
     ws_manager.broadcast_sync(message)
 
 
+def broadcast_partial_transcript(text: str):
+    """Broadcast partial transcription to all WebSocket clients."""
+    message = {"type": "partial_transcript", "text": text}
+    ws_manager.broadcast_sync(message)
+
+
+def on_audio_chunk(chunk):
+    """Callback for processing audio chunks during streaming transcription."""
+    global current_partial_text
+
+    if not transcriber or not transcriber.is_ready():
+        return
+
+    if not is_recording:
+        return
+
+    # Process chunk through transcriber - returns full transcription of buffer so far
+    full_text = transcriber.transcribe_chunk(chunk, sample_rate=AudioCapture.SAMPLE_RATE)
+
+    # Broadcast if we got new/updated transcription
+    if full_text and full_text.strip() and full_text != current_partial_text:
+        current_partial_text = full_text.strip()
+        broadcast_partial_transcript(current_partial_text)
+        print(f"Live: {current_partial_text}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize components on startup."""
@@ -111,8 +138,8 @@ async def lifespan(app: FastAPI):
 
     print("Starting FreeFlow API...")
 
-    # Initialize audio capture
-    audio = AudioCapture(device_index=get_audio_device())
+    # Initialize audio capture with streaming callback
+    audio = AudioCapture(device_index=get_audio_device(), on_audio_chunk=on_audio_chunk)
 
     # Initialize transcriber and start loading model
     transcriber = Transcriber(on_model_loaded=on_model_loaded)
@@ -268,8 +295,8 @@ def health_check():
 
 @app.post("/recording/start")
 def start_recording():
-    """Start audio recording."""
-    global is_recording, recording_start_time
+    """Start audio recording with streaming transcription."""
+    global is_recording, recording_start_time, current_partial_text
 
     if not transcriber or not transcriber.is_ready():
         raise HTTPException(status_code=503, detail="Model not ready yet")
@@ -278,6 +305,10 @@ def start_recording():
         raise HTTPException(status_code=400, detail="Already recording")
 
     if audio:
+        # Reset streaming state
+        current_partial_text = ""
+        transcriber.reset_streaming()
+
         success = audio.start_recording()
         if success:
             is_recording = True
@@ -293,7 +324,7 @@ def start_recording():
 @app.post("/recording/stop")
 def stop_recording() -> TranscriptionResult:
     """Stop recording, transcribe, apply replacements, and save to history."""
-    global is_recording, recording_start_time
+    global is_recording, recording_start_time, current_partial_text
 
     if not is_recording:
         raise HTTPException(status_code=400, detail="Not currently recording")
@@ -305,6 +336,14 @@ def stop_recording() -> TranscriptionResult:
     duration = None
     if recording_start_time:
         duration = time.time() - recording_start_time
+
+    # Flush any remaining audio in streaming buffer for live view
+    if transcriber and transcriber.is_ready():
+        flush_text = transcriber.flush_streaming(sample_rate=AudioCapture.SAMPLE_RATE)
+        if flush_text and flush_text.strip():
+            current_partial_text = flush_text.strip()
+            broadcast_partial_transcript(current_partial_text)
+            print(f"Flush: {current_partial_text}")
 
     # Stop recording
     audio_data = audio.stop_recording()
@@ -528,7 +567,7 @@ class HotkeyEnableModel(BaseModel):
 
 def on_hotkey_press():
     """Called when hotkey is pressed (Python-side detection)."""
-    global is_recording, recording_start_time
+    global is_recording, recording_start_time, current_partial_text
 
     print("Hotkey pressed!")
 
@@ -542,6 +581,10 @@ def on_hotkey_press():
 
     if audio:
         print("Starting recording...")
+        # Reset streaming state
+        current_partial_text = ""
+        transcriber.reset_streaming()
+
         success = audio.start_recording()
         if success:
             is_recording = True
@@ -602,7 +645,7 @@ def transcribe_and_paste(audio_data, duration):
 
 def on_hotkey_release():
     """Called when hotkey is released (Python-side detection)."""
-    global is_recording, recording_start_time
+    global is_recording, recording_start_time, current_partial_text
 
     if not is_recording:
         return
@@ -617,6 +660,14 @@ def on_hotkey_release():
     if recording_start_time:
         duration = time.time() - recording_start_time
 
+    # Flush any remaining audio in streaming buffer for live view
+    if transcriber and transcriber.is_ready():
+        flush_text = transcriber.flush_streaming(sample_rate=AudioCapture.SAMPLE_RATE)
+        if flush_text and flush_text.strip():
+            current_partial_text = flush_text.strip()
+            broadcast_partial_transcript(current_partial_text)
+            print(f"Flush: {current_partial_text}")
+
     # Stop recording
     audio_data = audio.stop_recording()
     is_recording = False
@@ -624,6 +675,7 @@ def on_hotkey_release():
 
     if audio_data is None or len(audio_data) == 0:
         print("No audio recorded")
+        broadcast_status("ready")
         return
 
     # Run transcription and paste in background thread to not block hotkey listener

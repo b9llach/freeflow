@@ -55,5 +55,9 @@ contextBridge.exposeInMainWorld('freeflow', {
 
   onConfigUpdate: (callback) => {
     ipcRenderer.on('config-update', (event, config) => callback(config));
+  },
+
+  onPartialTranscript: (callback) => {
+    ipcRenderer.on('partial-transcript', (event, text) => callback(text));
   }
 });

@@ -36,18 +36,22 @@ function getPythonPaths() {
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 
   if (isDev()) {
+    // In dev mode, Python files are in ../python folder
+    const pythonDir = path.join(__dirname, '..', 'python');
     return {
-      pythonDir: path.join(__dirname, '..'),
+      pythonDir: pythonDir,
       venvDir: path.join(__dirname, '..', '.venv'),
-      apiScript: path.join(__dirname, '..', 'api.py'),
-      requirements: path.join(__dirname, '..', 'requirements.txt'),
+      apiScript: path.join(pythonDir, 'api.py'),
+      requirements: path.join(pythonDir, 'requirements.txt'),
       systemPython: pythonCmd
     };
   } else {
     const pythonDir = path.join(process.resourcesPath, 'python');
+    // Store venv in AppData so it persists across app updates/rebuilds
+    const venvDir = path.join(app.getPath('userData'), 'python-venv');
     return {
       pythonDir: pythonDir,
-      venvDir: path.join(pythonDir, '.venv'),
+      venvDir: venvDir,
       apiScript: path.join(pythonDir, 'api.py'),
       requirements: path.join(pythonDir, 'requirements.txt'),
       systemPython: pythonCmd
@@ -373,6 +377,17 @@ function connectWebSocket() {
         // Update indicator window with new status
         indicatorWindow?.webContents.send('status-update', message.status);
 
+        // Resize indicator window based on recording state
+        if (indicatorWindow && !indicatorWindow.isDestroyed()) {
+          if (message.status === 'recording') {
+            // Expand window to show transcript
+            indicatorWindow.setSize(320, 180);
+          } else if (message.status === 'ready' || message.status === 'error') {
+            // Shrink back to normal size
+            indicatorWindow.setSize(200, 56);
+          }
+        }
+
         // Update local recording state
         if (message.is_recording !== undefined) {
           isRecording = message.is_recording;
@@ -383,6 +398,9 @@ function connectWebSocket() {
           mainWindow?.webContents.send('history-update');
           indicatorWindow?.webContents.send('paste-text', message.transcription);
         }
+      } else if (message.type === 'partial_transcript') {
+        // Send partial transcript to indicator window for live display
+        indicatorWindow?.webContents.send('partial-transcript', message.text);
       }
     } catch (e) {
       console.error('Failed to parse WebSocket message:', e);
@@ -581,9 +599,10 @@ function createIndicatorWindow() {
     y: config.window_position[1],
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: false,
+    resizable: true,  // Allow programmatic resize
     hasShadow: false,
     focusable: false,  // Prevents stealing focus from other apps
     webPreferences: {
@@ -781,6 +800,9 @@ app.whenReady().then(async () => {
   createIndicatorWindow();
   createTray();
 
+  // Startup complete - now window-all-closed can quit the app
+  isStartingUp = false;
+
   // Register hotkeys
   registerHotkeys();
 
@@ -788,8 +810,14 @@ app.whenReady().then(async () => {
   connectWebSocket();
 });
 
+// Track if we're still in startup phase
+let isStartingUp = true;
+
 app.on('window-all-closed', () => {
-  app.quit();
+  // Don't quit during startup (setup window closing before main window opens)
+  if (!isStartingUp) {
+    app.quit();
+  }
 });
 
 app.on('before-quit', () => {
