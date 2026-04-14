@@ -115,11 +115,46 @@ impl Pipeline {
             return Ok(None);
         }
 
+        // Bail out early if the Whisper model hasn't finished background-loading.
+        // Otherwise transcribe() errors and leaves the UI stuck on Thinking.
+        let stt = self.stt_arc();
+        if stt.name() == "null" {
+            let _ = self.app.emit(
+                "freeflow://toast",
+                "Whisper model is still loading, try again in a moment",
+            );
+            self.finish_idle();
+            return Ok(None);
+        }
+
         self.set_status(PipelineStatus::Thinking);
 
+        match self.run_pipeline(samples, stt).await {
+            Ok(opt) => {
+                if opt.is_none() {
+                    self.finish_idle();
+                }
+                Ok(opt)
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, "pipeline processing failed");
+                let _ = self
+                    .app
+                    .emit("freeflow://toast", format!("Error: {e}"));
+                self.finish_idle();
+                Err(e)
+            }
+        }
+    }
+
+    async fn run_pipeline(
+        &self,
+        samples: Vec<f32>,
+        stt: Arc<dyn SttEngine>,
+    ) -> anyhow::Result<Option<Transcription>> {
         let started = std::time::Instant::now();
         let lang = self.settings.lock().whisper_language.clone();
-        let stt = self.stt_arc();
+
         let raw = stt
             .transcribe(&samples, crate::audio::TARGET_SAMPLE_RATE, &lang)
             .await?;
@@ -128,7 +163,6 @@ impl Pipeline {
             let _ = self
                 .app
                 .emit("freeflow://toast", "No speech detected");
-            self.finish_idle();
             return Ok(None);
         }
 
@@ -184,7 +218,7 @@ impl Pipeline {
             meta: None,
         };
 
-        {
+        if let Err(e) = (|| -> anyhow::Result<()> {
             let db = self.db.lock();
             db.insert_transcription(&tx)?;
             db.insert_message(&tx.id, "system", &system_prompt)?;
@@ -192,6 +226,9 @@ impl Pipeline {
             if let Some(c) = &cleaned {
                 db.insert_message(&tx.id, "assistant", c)?;
             }
+            Ok(())
+        })() {
+            tracing::warn!(error = ?e, "history insert failed, continuing");
         }
 
         let (auto_paste, copy_clipboard) = {

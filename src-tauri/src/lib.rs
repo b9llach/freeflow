@@ -60,9 +60,30 @@ pub fn run() {
             let db = Db::open(db_path)?;
             let db = Arc::new(Mutex::new(db));
 
-            // Start with a null STT so the UI comes up instantly. We'll
-            // background-load the real Whisper model and swap it in when ready.
-            let stt: Arc<dyn SttEngine> = Arc::new(NullStt);
+            // Load Whisper synchronously in setup so the pipeline has a real
+            // STT the moment the hotkey listener starts. Warmup still runs so
+            // the first hotkey press isn't paying the mmap page-in cost.
+            let stt: Arc<dyn SttEngine> = {
+                let maybe_path = settings.lock().whisper_model_path.clone();
+                match maybe_path {
+                    Some(p) if p.exists() => match WhisperStt::load(p.clone()) {
+                        Ok(stt) => {
+                            tracing::info!("whisper model loaded, warming up");
+                            stt.warmup_blocking();
+                            tracing::info!("whisper warmup complete");
+                            Arc::new(stt) as Arc<dyn SttEngine>
+                        }
+                        Err(e) => {
+                            tracing::error!(error = ?e, "failed to load whisper model");
+                            Arc::new(NullStt) as Arc<dyn SttEngine>
+                        }
+                    },
+                    _ => {
+                        tracing::warn!("whisper model not configured; transcription will fail until set in settings");
+                        Arc::new(NullStt) as Arc<dyn SttEngine>
+                    }
+                }
+            };
 
             let llm: Arc<dyn LlmProvider> =
                 Arc::new(Ollama::new(settings.lock().ollama_base_url.clone()));
@@ -80,36 +101,6 @@ pub fn run() {
                 outputs,
                 settings.clone(),
             ));
-
-            // Eager-load + warmup the Whisper model on a background thread so
-            // the first hotkey press doesn't pay the mmap page-in cost.
-            {
-                let maybe_path = settings.lock().whisper_model_path.clone();
-                let pipeline_for_load = pipeline.clone();
-                std::thread::spawn(move || {
-                    let Some(path) = maybe_path else {
-                        tracing::info!("no whisper model configured; skipping preload");
-                        return;
-                    };
-                    if !path.exists() {
-                        tracing::warn!(path = ?path, "whisper model path missing; skipping preload");
-                        return;
-                    }
-                    let started = std::time::Instant::now();
-                    match WhisperStt::load(path.clone()) {
-                        Ok(stt) => {
-                            tracing::info!(elapsed = ?started.elapsed(), "whisper model loaded, warming up");
-                            let warm_started = std::time::Instant::now();
-                            stt.warmup_blocking();
-                            tracing::info!(elapsed = ?warm_started.elapsed(), "whisper warmup complete");
-                            pipeline_for_load.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
-                        }
-                        Err(e) => {
-                            tracing::error!(error = ?e, path = ?path, "failed to load whisper model");
-                        }
-                    }
-                });
-            }
 
             let (hk_key, hk_mode) = {
                 let s = settings.lock();
