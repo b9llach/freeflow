@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Freeflow Indicator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        font-family: "Plus Jakarta Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #fafaf9;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .wrap {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px 10px 14px;
+        background: rgba(10, 10, 11, 0.88);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 999px;
+        backdrop-filter: blur(16px);
+        box-shadow:
+          0 10px 30px rgba(0, 0, 0, 0.5),
+          0 1px 0 rgba(255, 255, 255, 0.03) inset;
+        width: fit-content;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #8a8a94;
+        transition: background 220ms ease;
+      }
+      .dot.recording {
+        background: #f87171;
+        animation: pulse-red 1.5s ease-out infinite;
+      }
+      .dot.thinking {
+        background: #a78bfa;
+        animation: pulse-violet 1.25s ease-in-out infinite;
+      }
+      .dot.pasted {
+        background: #34d399;
+        animation: pulse-green 700ms ease-out;
+      }
+      @keyframes pulse-red {
+        0%   { box-shadow: 0 0 0 0    rgba(248, 113, 113, 0.55); }
+        70%  { box-shadow: 0 0 0 10px rgba(248, 113, 113, 0);    }
+        100% { box-shadow: 0 0 0 0    rgba(248, 113, 113, 0);    }
+      }
+      @keyframes pulse-violet {
+        0%, 100% { box-shadow: 0 0 0 0   rgba(167, 139, 250, 0.55); transform: scale(1);    }
+        50%      { box-shadow: 0 0 0 6px rgba(167, 139, 250, 0);    transform: scale(1.15); }
+      }
+      @keyframes pulse-green {
+        0%   { box-shadow: 0 0 0 0    rgba(52, 211, 153, 0.6); }
+        100% { box-shadow: 0 0 0 14px rgba(52, 211, 153, 0);   }
+      }
+      .label {
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: -0.005em;
+        color: rgba(250, 250, 249, 0.9);
+        transition: color 180ms ease;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="dot recording"></div>
+      <div class="label">Recording</div>
+    </div>
+    <script type="module" src="/src/indicator.ts"></script>
+  </body>
+</html>
