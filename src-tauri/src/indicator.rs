@@ -1,17 +1,27 @@
 use tauri::{AppHandle, Manager};
 
+// NSWindow operations on macOS must run on the main thread. Our callers
+// (hotkey hook thread, tokio worker) are not the main thread, so we dispatch
+// through run_on_main_thread on every platform for consistency.
+
 pub fn show(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("indicator") {
-        let _ = w.show();
-        let _ = w.set_always_on_top(true);
-        position_top_right(&w);
-    }
+    let a = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = a.get_webview_window("indicator") {
+            let _ = w.show();
+            let _ = w.set_always_on_top(true);
+            position_top_right(&w);
+        }
+    });
 }
 
 pub fn hide(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("indicator") {
-        let _ = w.hide();
-    }
+    let a = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = a.get_webview_window("indicator") {
+            let _ = w.hide();
+        }
+    });
 }
 
 fn position_top_right(window: &tauri::WebviewWindow) {
