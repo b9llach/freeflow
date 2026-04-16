@@ -23,7 +23,14 @@ impl PasteSink {
 #[cfg(target_os = "windows")]
 const KEY_V: Key = Key::Other(0x56); // VK_V
 
-#[cfg(not(target_os = "windows"))]
+// macOS: use the raw virtual keycode instead of Key::Unicode('v') because
+// Unicode input forces enigo to call TSMGetInputSourceProperty to look up
+// which physical key produces that character, and TSM asserts on the main
+// thread on macOS 15+ — crashing the process from our tokio worker.
+#[cfg(target_os = "macos")]
+const KEY_V: Key = Key::Other(0x09); // kVK_ANSI_V
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 const KEY_V: Key = Key::Unicode('v');
 
 fn send_paste(enigo: &mut Enigo) -> anyhow::Result<()> {
