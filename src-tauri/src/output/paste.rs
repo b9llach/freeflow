@@ -26,6 +26,71 @@ const KEY_V: Key = Key::Other(0x56); // VK_V
 #[cfg(not(target_os = "windows"))]
 const KEY_V: Key = Key::Unicode('v');
 
+fn send_paste(enigo: &mut Enigo) -> anyhow::Result<()> {
+    // macOS: Cmd+V is the universal paste shortcut (Cmd+Shift+V is
+    // "paste and match style" in many apps and is less reliable).
+    // Windows / Linux: Ctrl+Shift+V is the plain-text paste in terminals,
+    // Electron apps, browsers, and most modern software. Raw VK scancodes
+    // instead of Unicode input so the modifier combo is interpreted as
+    // a shortcut, not as text entry.
+
+    #[cfg(target_os = "macos")]
+    {
+        enigo
+            .key(Key::Meta, Direction::Press)
+            .map_err(|e| anyhow::anyhow!("cmd press: {e}"))?;
+        std::thread::sleep(Duration::from_millis(15));
+
+        enigo
+            .key(KEY_V, Direction::Press)
+            .map_err(|e| anyhow::anyhow!("v press: {e}"))?;
+        std::thread::sleep(Duration::from_millis(28));
+
+        enigo
+            .key(KEY_V, Direction::Release)
+            .map_err(|e| anyhow::anyhow!("v release: {e}"))?;
+        std::thread::sleep(Duration::from_millis(15));
+
+        enigo
+            .key(Key::Meta, Direction::Release)
+            .map_err(|e| anyhow::anyhow!("cmd release: {e}"))?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        enigo
+            .key(Key::Control, Direction::Press)
+            .map_err(|e| anyhow::anyhow!("ctrl press: {e}"))?;
+        std::thread::sleep(Duration::from_millis(15));
+
+        enigo
+            .key(Key::Shift, Direction::Press)
+            .map_err(|e| anyhow::anyhow!("shift press: {e}"))?;
+        std::thread::sleep(Duration::from_millis(15));
+
+        enigo
+            .key(KEY_V, Direction::Press)
+            .map_err(|e| anyhow::anyhow!("v press: {e}"))?;
+        std::thread::sleep(Duration::from_millis(28));
+
+        enigo
+            .key(KEY_V, Direction::Release)
+            .map_err(|e| anyhow::anyhow!("v release: {e}"))?;
+        std::thread::sleep(Duration::from_millis(15));
+
+        enigo
+            .key(Key::Shift, Direction::Release)
+            .map_err(|e| anyhow::anyhow!("shift release: {e}"))?;
+        std::thread::sleep(Duration::from_millis(15));
+
+        enigo
+            .key(Key::Control, Direction::Release)
+            .map_err(|e| anyhow::anyhow!("ctrl release: {e}"))?;
+    }
+
+    Ok(())
+}
+
 #[async_trait]
 impl OutputSink for PasteSink {
     async fn emit(&self, text: &str) -> anyhow::Result<()> {
@@ -44,46 +109,15 @@ impl OutputSink for PasteSink {
                 .write_text(text.clone())
                 .map_err(|e| anyhow::anyhow!("clipboard write: {e}"))?;
 
-            // Let the OS clipboard manager propagate the change before we fire Ctrl+V.
-            // Terminals and Electron apps poll on focus, so this needs to be generous.
+            // Let the OS clipboard manager propagate the change before we
+            // fire the paste shortcut. Terminals and Electron apps poll on
+            // focus, so this needs to be generous.
             std::thread::sleep(Duration::from_millis(90));
 
             let mut enigo = Enigo::new(&EnigoSettings::default())
                 .map_err(|e| anyhow::anyhow!("enigo init: {e}"))?;
 
-            // Ctrl+Shift+V is the plain-text paste in most modern Windows apps
-            // (Terminal, VS Code, Chrome, Slack, Discord) and is the most
-            // reliable paste shortcut in terminals specifically. Raw VK scancodes
-            // instead of Unicode input so the modifier combo is interpreted as
-            // a shortcut, not as text entry.
-            enigo
-                .key(Key::Control, Direction::Press)
-                .map_err(|e| anyhow::anyhow!("ctrl press: {e}"))?;
-            std::thread::sleep(Duration::from_millis(15));
-
-            enigo
-                .key(Key::Shift, Direction::Press)
-                .map_err(|e| anyhow::anyhow!("shift press: {e}"))?;
-            std::thread::sleep(Duration::from_millis(15));
-
-            enigo
-                .key(KEY_V, Direction::Press)
-                .map_err(|e| anyhow::anyhow!("v press: {e}"))?;
-            std::thread::sleep(Duration::from_millis(28));
-
-            enigo
-                .key(KEY_V, Direction::Release)
-                .map_err(|e| anyhow::anyhow!("v release: {e}"))?;
-            std::thread::sleep(Duration::from_millis(15));
-
-            enigo
-                .key(Key::Shift, Direction::Release)
-                .map_err(|e| anyhow::anyhow!("shift release: {e}"))?;
-            std::thread::sleep(Duration::from_millis(15));
-
-            enigo
-                .key(Key::Control, Direction::Release)
-                .map_err(|e| anyhow::anyhow!("ctrl release: {e}"))?;
+            send_paste(&mut enigo)?;
 
             // Only restore the prior clipboard if the user opted out of keeping
             // the transcript on the clipboard. Delay the restore long enough that

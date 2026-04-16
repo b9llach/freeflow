@@ -93,6 +93,11 @@ pub fn capture_key_name(key: String) -> String {
 }
 
 #[tauri::command]
+pub fn get_platform() -> &'static str {
+    std::env::consts::OS
+}
+
+#[tauri::command]
 pub fn set_hotkey_enabled(state: State<'_, AppState>, enabled: bool) -> Result<()> {
     state.hotkey_state.set_enabled(enabled);
     Ok(())

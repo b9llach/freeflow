@@ -184,6 +184,7 @@ pub fn run() {
             commands::set_hotkey_enabled,
             commands::pick_whisper_model,
             commands::download_whisper_model,
+            commands::get_platform,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -68,6 +68,7 @@ export const api = {
   pickWhisperModel: (path: string) => invoke<void>("pick_whisper_model", { path }),
   downloadWhisperModel: (model: WhisperModelKind) =>
     invoke<string>("download_whisper_model", { model }),
+  getPlatform: () => invoke<string>("get_platform"),
 };
 
 export const WHISPER_MODEL_OPTIONS: {

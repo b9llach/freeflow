@@ -12,6 +12,7 @@ export default function App() {
   const [history, setHistory] = useState<Transcription[]>([]);
   const [status, setStatus] = useState<PipelineStatus>("idle");
   const [toast, setToast] = useState<string | null>(null);
+  const [platform, setPlatform] = useState<string>("windows");
   const toastTimer = useRef<number | null>(null);
 
   const showToast = useCallback((msg: string) => {
@@ -40,6 +41,19 @@ export default function App() {
       document.documentElement.dataset.theme = settings.theme;
     }
   }, [settings?.theme]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const p = await api.getPlatform();
+        setPlatform(p);
+        document.documentElement.dataset.os = p;
+      } catch {
+        // fall back to windows layout
+        document.documentElement.dataset.os = "windows";
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
@@ -114,7 +128,7 @@ export default function App() {
               </span>
             </div>
           )}
-          <WindowControls />
+          {platform !== "macos" && <WindowControls />}
         </div>
       </header>
 

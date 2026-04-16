@@ -26,7 +26,7 @@ A Tauri 2 desktop dictation tool. Hold a single hotkey, speak, release — Whisp
 
 ## Requirements
 
-- Windows 10 / 11 (primary target)
+- Windows 10 / 11, or macOS 10.15+
 - [Rust](https://rustup.rs/) 1.77+
 - Node 18+
 - An [Ollama](https://ollama.com) instance reachable over HTTP
@@ -100,11 +100,28 @@ Closing the main window does not quit the app — it hides to the system tray (n
 npm run tauri build
 ```
 
-This produces:
+On Windows this produces:
 
 - `src-tauri/target/release/freeflow2.exe` — standalone release exe
 - `src-tauri/target/release/bundle/msi/Freeflow_<version>_x64_en-US.msi` — MSI installer
 - `src-tauri/target/release/bundle/nsis/Freeflow_<version>_x64-setup.exe` — NSIS installer
+
+On macOS this produces:
+
+- `src-tauri/target/release/bundle/macos/Freeflow.app` — app bundle
+- `src-tauri/target/release/bundle/dmg/Freeflow_<version>_x64.dmg` — installer disk image (Intel)
+  or `_aarch64.dmg` (Apple Silicon)
+
+### macOS first-launch setup
+
+After installing, launch Freeflow once and then grant two permissions before the hotkey and transcription will work:
+
+1. **Microphone** — macOS will prompt automatically the first time you press the hotkey. Approve it.
+2. **Accessibility** — open `System Settings → Privacy & Security → Accessibility`, click the `+` button, and add `Freeflow.app`. This is what lets Freeflow install the global keyboard hook for push-to-talk and send the Cmd+V keystroke to paste into the focused window. Without it, holding your hotkey does nothing.
+
+You may need to quit and relaunch Freeflow after granting Accessibility.
+
+On macOS the paste shortcut is `Cmd+V` (Freeflow detects the platform at runtime and sends the right combo). The native traffic-light buttons stay in the top-left; the custom Windows min/max/close buttons are automatically hidden.
 
 ## Icon generation
 

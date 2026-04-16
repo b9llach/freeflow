@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Freeflow records audio from your microphone to transcribe what you say into text locally with Whisper.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Freeflow sends synthetic keystrokes to paste cleaned transcripts into the focused window.</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    <key>LSUIElement</key>
+    <false/>
+</dict>
+</plist>

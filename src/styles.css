@@ -160,6 +160,19 @@ button { cursor: pointer; }
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* macOS: leave room on the left for the native traffic lights
+   (close/minimize/maximize) which float over the header because we
+   use titleBarStyle=Overlay to keep the window chrome-free. */
+html[data-os="macos"] .header {
+  padding-left: 84px;
+}
+html[data-os="macos"] .window-controls {
+  display: none;
+}
+html[data-os="macos"] .header-right {
+  padding-right: 20px;
+}
 .header-right {
   display: flex;
   align-items: center;
