@@ -41,8 +41,11 @@ cpal = "0.15"
 # Whisper STT
 whisper-rs = { version = "0.13", default-features = false }
 
-# Global keyboard hook (supports left/right modifier distinction)
-rdev = "0.5"
+# Global keyboard hook (supports left/right modifier distinction).
+# Using the RustDesk fork because upstream 0.5 calls TSMGetInputSourceProperty
+# from the event-tap callback thread on macOS, which trips a dispatch_assert
+# on macOS 15+ and crashes the process on every key event.
+rdev = { git = "https://github.com/rustdesk-org/rdev.git" }
 
 # Keystroke simulation for paste
 enigo = "0.3"
