@@ -118,15 +118,22 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
 
   const handleBackendChange = async (backend: SttBackend) => {
     setBackendErr(null);
-    // Optimistic update — the backend enforces the invariant that the
-    // chosen backend has a loaded model.
+    // Always flip the UI so the Parakeet download panel becomes reachable
+    // even before a model is present. The engine swap only fires when a
+    // model is actually configured for the target backend — otherwise we
+    // save the preference and wait for the download flow to load it.
     onChange({ ...settings, stt_backend: backend });
+
+    const hasModel =
+      backend === "whisper"
+        ? !!settings.whisper_model_path
+        : !!settings.parakeet_model_dir;
+    if (!hasModel) return;
+
     try {
       await api.setSttBackend(backend);
     } catch (e) {
       setBackendErr(String(e));
-      // Roll back the local state on failure.
-      onChange({ ...settings });
     }
   };
 
