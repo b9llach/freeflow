@@ -41,6 +41,12 @@ cpal = "0.15"
 # Whisper STT
 whisper-rs = { version = "0.13", default-features = false }
 
+# Parakeet STT (NVIDIA Parakeet TDT via sherpa-onnx)
+# sherpa-rs wraps the sherpa-onnx C++ library. On Windows and macOS its build
+# script fetches prebuilt binaries; on Linux it may need a system install.
+# The `download-binaries` feature triggers the fetch.
+sherpa-rs = { version = "0.6", default-features = false, features = ["download-binaries"] }
+
 # Global keyboard hook (supports left/right modifier distinction).
 # Using the RustDesk fork because upstream 0.5 calls TSMGetInputSourceProperty
 # from the event-tap callback thread on macOS, which trips a dispatch_assert

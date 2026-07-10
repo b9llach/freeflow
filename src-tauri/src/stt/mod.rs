@@ -1,3 +1,4 @@
+pub mod parakeet;
 pub mod whisper;
 
 use async_trait::async_trait;

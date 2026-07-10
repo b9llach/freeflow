@@ -4,6 +4,7 @@ import {
   DownloadProgress,
   ModelInfo,
   Settings,
+  SttBackend,
   WHISPER_MODEL_OPTIONS,
   WhisperModelKind,
 } from "../lib/api";
@@ -33,6 +34,10 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [downloadErr, setDownloadErr] = useState<string | null>(null);
+
+  const [parakeetDownloading, setParakeetDownloading] = useState(false);
+  const [parakeetErr, setParakeetErr] = useState<string | null>(null);
+  const [backendErr, setBackendErr] = useState<string | null>(null);
 
   const refreshModels = async () => {
     setLoadingModels(true);
@@ -89,6 +94,39 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
     } finally {
       setDownloading(false);
       setTimeout(() => setProgress(null), 1800);
+    }
+  };
+
+  const handleParakeetDownload = async () => {
+    setParakeetDownloading(true);
+    setParakeetErr(null);
+    setProgress(null);
+    try {
+      const dir = await api.downloadParakeetModel();
+      onChange({
+        ...settings,
+        parakeet_model_dir: dir,
+        stt_backend: "parakeet",
+      });
+    } catch (e) {
+      setParakeetErr(String(e));
+    } finally {
+      setParakeetDownloading(false);
+      setTimeout(() => setProgress(null), 1800);
+    }
+  };
+
+  const handleBackendChange = async (backend: SttBackend) => {
+    setBackendErr(null);
+    // Optimistic update — the backend enforces the invariant that the
+    // chosen backend has a loaded model.
+    onChange({ ...settings, stt_backend: backend });
+    try {
+      await api.setSttBackend(backend);
+    } catch (e) {
+      setBackendErr(String(e));
+      // Roll back the local state on failure.
+      onChange({ ...settings });
     }
   };
 
@@ -204,7 +242,32 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
       </div>
 
       <div className="rail-section">
-        <h2>Whisper</h2>
+        <h2>Speech to text</h2>
+        <div className="field">
+          <label>Engine</label>
+          <div className="seg">
+            <button
+              className={settings.stt_backend === "whisper" ? "active" : ""}
+              onClick={() => handleBackendChange("whisper")}
+            >
+              Whisper
+            </button>
+            <button
+              className={settings.stt_backend === "parakeet" ? "active" : ""}
+              onClick={() => handleBackendChange("parakeet")}
+            >
+              Parakeet
+            </button>
+          </div>
+          {backendErr && <div className="field-error">{backendErr}</div>}
+          <div className="field-hint">
+            Whisper runs locally via whisper.cpp. Parakeet is NVIDIA's TDT
+            0.6B v3 multilingual model via sherpa-onnx.
+          </div>
+        </div>
+
+        {settings.stt_backend === "whisper" && (
+          <>
         <div className="field">
           <label>Model file</label>
           <div className="row">
@@ -270,6 +333,61 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
             placeholder="en"
           />
         </div>
+          </>
+        )}
+
+        {settings.stt_backend === "parakeet" && (
+          <>
+            <div className="field">
+              <label>Model directory</label>
+              <input
+                type="text"
+                value={settings.parakeet_model_dir ?? ""}
+                readOnly
+                placeholder="not downloaded yet"
+              />
+              <div className="field-hint">
+                NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX from{" "}
+                <code>csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8</code>).
+                ~670 MB total across four files.
+              </div>
+            </div>
+            <div className="field">
+              <button
+                className="btn primary"
+                onClick={handleParakeetDownload}
+                disabled={parakeetDownloading}
+              >
+                {parakeetDownloading
+                  ? "Downloading..."
+                  : settings.parakeet_model_dir
+                    ? "Re-download / repair"
+                    : "Download model"}
+              </button>
+              {progress && (
+                <>
+                  <div className="progress">
+                    <div
+                      className="progress-bar"
+                      style={{
+                        width: progress.total
+                          ? `${Math.min(100, (progress.downloaded / progress.total) * 100)}%`
+                          : "5%",
+                      }}
+                    />
+                  </div>
+                  <div className="progress-meta">
+                    <span>
+                      {progress.name} · {formatBytes(progress.downloaded)}
+                    </span>
+                    {progress.total && <span>{formatBytes(progress.total)}</span>}
+                  </div>
+                </>
+              )}
+              {parakeetErr && <div className="field-error">{parakeetErr}</div>}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="rail-section">

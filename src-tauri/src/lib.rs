@@ -23,7 +23,7 @@ use crate::llm::ollama::Ollama;
 use crate::llm::LlmProvider;
 use crate::output::{clipboard::ClipboardSink, paste::PasteSink, OutputSink};
 use crate::pipeline::Pipeline;
-use crate::stt::{whisper::WhisperStt, SttEngine};
+use crate::stt::{parakeet::ParakeetStt, whisper::WhisperStt, SttEngine};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -60,28 +60,57 @@ pub fn run() {
             let db = Db::open(db_path)?;
             let db = Arc::new(Mutex::new(db));
 
-            // Load Whisper synchronously in setup so the pipeline has a real
-            // STT the moment the hotkey listener starts. Warmup still runs so
-            // the first hotkey press isn't paying the mmap page-in cost.
+            // Load the STT engine synchronously in setup so the pipeline has a
+            // real transcriber the moment the hotkey listener starts. Warmup
+            // still runs so the first hotkey press isn't paying the mmap
+            // page-in cost.
             let stt: Arc<dyn SttEngine> = {
-                let maybe_path = settings.lock().whisper_model_path.clone();
-                match maybe_path {
-                    Some(p) if p.exists() => match WhisperStt::load(p.clone()) {
-                        Ok(stt) => {
-                            tracing::info!("whisper model loaded, warming up");
-                            stt.warmup_blocking();
-                            tracing::info!("whisper warmup complete");
-                            Arc::new(stt) as Arc<dyn SttEngine>
-                        }
-                        Err(e) => {
-                            tracing::error!(error = ?e, "failed to load whisper model");
+                use crate::settings::SttBackend;
+                let (backend, whisper_path, parakeet_dir) = {
+                    let s = settings.lock();
+                    (
+                        s.stt_backend,
+                        s.whisper_model_path.clone(),
+                        s.parakeet_model_dir.clone(),
+                    )
+                };
+                match backend {
+                    SttBackend::Whisper => match whisper_path {
+                        Some(p) if p.exists() => match WhisperStt::load(p.clone()) {
+                            Ok(stt) => {
+                                tracing::info!("whisper model loaded, warming up");
+                                stt.warmup_blocking();
+                                tracing::info!("whisper warmup complete");
+                                Arc::new(stt) as Arc<dyn SttEngine>
+                            }
+                            Err(e) => {
+                                tracing::error!(error = ?e, "failed to load whisper model");
+                                Arc::new(NullStt) as Arc<dyn SttEngine>
+                            }
+                        },
+                        _ => {
+                            tracing::warn!("whisper model not configured; transcription will fail until set in settings");
                             Arc::new(NullStt) as Arc<dyn SttEngine>
                         }
                     },
-                    _ => {
-                        tracing::warn!("whisper model not configured; transcription will fail until set in settings");
-                        Arc::new(NullStt) as Arc<dyn SttEngine>
-                    }
+                    SttBackend::Parakeet => match parakeet_dir {
+                        Some(d) if d.exists() => match ParakeetStt::load(d.clone()) {
+                            Ok(stt) => {
+                                tracing::info!("parakeet model loaded, warming up");
+                                stt.warmup_blocking();
+                                tracing::info!("parakeet warmup complete");
+                                Arc::new(stt) as Arc<dyn SttEngine>
+                            }
+                            Err(e) => {
+                                tracing::error!(error = ?e, "failed to load parakeet model");
+                                Arc::new(NullStt) as Arc<dyn SttEngine>
+                            }
+                        },
+                        _ => {
+                            tracing::warn!("parakeet model not downloaded; transcription will fail until set in settings");
+                            Arc::new(NullStt) as Arc<dyn SttEngine>
+                        }
+                    },
                 }
             };
 
@@ -184,6 +213,8 @@ pub fn run() {
             commands::set_hotkey_enabled,
             commands::pick_whisper_model,
             commands::download_whisper_model,
+            commands::download_parakeet_model,
+            commands::set_stt_backend,
             commands::get_platform,
         ])
         .run(tauri::generate_context!())

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type HotkeyMode = "pushtotalk" | "toggle";
 export type Theme = "light" | "dark";
 export type PipelineStatus = "idle" | "recording" | "thinking" | "pasted";
+export type SttBackend = "whisper" | "parakeet";
 
 export interface Settings {
   ollama_base_url: string;
@@ -18,6 +19,8 @@ export interface Settings {
   llm_enabled: boolean;
   vocabulary: string[];
   theme: Theme;
+  stt_backend: SttBackend;
+  parakeet_model_dir: string | null;
 }
 
 export interface Transcription {
@@ -68,6 +71,9 @@ export const api = {
   pickWhisperModel: (path: string) => invoke<void>("pick_whisper_model", { path }),
   downloadWhisperModel: (model: WhisperModelKind) =>
     invoke<string>("download_whisper_model", { model }),
+  downloadParakeetModel: () => invoke<string>("download_parakeet_model"),
+  setSttBackend: (backend: SttBackend) =>
+    invoke<void>("set_stt_backend", { backend }),
   getPlatform: () => invoke<string>("get_platform"),
 };
 

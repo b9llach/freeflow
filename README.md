@@ -71,6 +71,23 @@ Models come from https://huggingface.co/ggerganov/whisper.cpp — the same files
 
 Downloaded models land in `%APPDATA%/com.freeflow.app/models/ggml-*.bin`. You can also point at an existing `ggml-*.bin` from another whisper.cpp install via the Browse button.
 
+## Parakeet (optional STT backend)
+
+Freeflow also supports NVIDIA's **Parakeet TDT 0.6B v3** via `sherpa-onnx`. It's a multilingual (25 languages) Token-and-Duration Transducer that generally beats Whisper on English WER and is significantly faster on CPU inference.
+
+Switch backends under Settings → Speech to text. On first switch to Parakeet, click Download and Freeflow fetches four files from `csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` on Hugging Face:
+
+| File | Size |
+| --- | --- |
+| `encoder.int8.onnx` | ~652 MB |
+| `decoder.int8.onnx` | ~11.8 MB |
+| `joiner.int8.onnx` | ~6.4 MB |
+| `tokens.txt` | ~94 kB |
+
+They land in `%APPDATA%/com.freeflow.app/models/parakeet-tdt-0.6b-v3-int8/` (Windows) or `~/Library/Application Support/com.freeflow.app/models/parakeet-tdt-0.6b-v3-int8/` (macOS). Whisper and Parakeet configs live side by side, so switching between them at runtime is instant once both are downloaded.
+
+The Rust binding is `sherpa-rs`, which pulls the `sherpa-onnx` C++ library. Prebuilt binaries are downloaded at build time on Windows and macOS. Linux may require a system install of `sherpa-onnx`.
+
 On startup, Freeflow loads the model on a background thread and then runs a short silent transcription to force the weights into RAM and warm the internal caches — so the first real hotkey press doesn't pay the mmap page-in cost.
 
 ## Paste reliability

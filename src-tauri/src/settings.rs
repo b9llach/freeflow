@@ -19,6 +19,10 @@ pub struct Settings {
     pub vocabulary: Vec<String>,
     #[serde(default)]
     pub theme: Theme,
+    #[serde(default)]
+    pub stt_backend: SttBackend,
+    #[serde(default)]
+    pub parakeet_model_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,6 +45,19 @@ impl Default for Theme {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SttBackend {
+    Whisper,
+    Parakeet,
+}
+
+impl Default for SttBackend {
+    fn default() -> Self {
+        SttBackend::Whisper
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -57,6 +74,8 @@ impl Default for Settings {
             llm_enabled: true,
             vocabulary: Vec::new(),
             theme: Theme::Dark,
+            stt_backend: SttBackend::Whisper,
+            parakeet_model_dir: None,
         }
     }
 }

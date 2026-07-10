@@ -11,6 +11,7 @@ use crate::llm::ollama::Ollama;
 use crate::llm::{LlmProvider, ModelInfo};
 use crate::pipeline::Pipeline;
 use crate::settings::{self, Settings};
+use crate::stt::parakeet::ParakeetStt;
 use crate::stt::whisper::WhisperStt;
 use crate::stt::SttEngine;
 
@@ -159,9 +160,65 @@ impl WhisperModelKind {
 
 #[derive(serde::Serialize, Clone)]
 struct DownloadProgress {
-    name: &'static str,
+    name: String,
     downloaded: u64,
     total: Option<u64>,
+}
+
+/// Streams `url` into `target`, emitting `freeflow://download-progress`
+/// events with `name` every ~512 KB. Uses a `.part` sidecar and atomic
+/// rename so partial writes don't leave a corrupt "finished" file behind.
+async fn stream_download(
+    app: &AppHandle,
+    url: &str,
+    target: &std::path::Path,
+    progress_name: &str,
+) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?;
+    let total = resp.content_length();
+
+    let tmp = target.with_extension(format!(
+        "{}.part",
+        target.extension().and_then(|s| s.to_str()).unwrap_or("dl")
+    ));
+    let mut file = std::fs::File::create(&tmp)?;
+    let mut stream = resp.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_emit: u64 = 0;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&chunk)?;
+        downloaded += chunk.len() as u64;
+        if downloaded - last_emit >= 512 * 1024 {
+            last_emit = downloaded;
+            let _ = app.emit(
+                "freeflow://download-progress",
+                DownloadProgress {
+                    name: progress_name.to_string(),
+                    downloaded,
+                    total,
+                },
+            );
+        }
+    }
+    file.flush()?;
+    drop(file);
+    std::fs::rename(&tmp, target)?;
+    let _ = app.emit(
+        "freeflow://download-progress",
+        DownloadProgress {
+            name: progress_name.to_string(),
+            downloaded,
+            total,
+        },
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -184,46 +241,7 @@ pub async fn download_whisper_model(
         let url = format!(
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{file_name}?download=true"
         );
-        let resp = reqwest::Client::new()
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?;
-        let total = resp.content_length();
-        let tmp = target.with_extension("bin.part");
-        let mut file = std::fs::File::create(&tmp)?;
-        let mut stream = resp.bytes_stream();
-        let mut downloaded: u64 = 0;
-        let mut last_emit: u64 = 0;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| e.to_string())?;
-            file.write_all(&chunk)?;
-            downloaded += chunk.len() as u64;
-            if downloaded - last_emit >= 512 * 1024 {
-                last_emit = downloaded;
-                let _ = app.emit(
-                    "freeflow://download-progress",
-                    DownloadProgress {
-                        name: stem,
-                        downloaded,
-                        total,
-                    },
-                );
-            }
-        }
-        file.flush()?;
-        drop(file);
-        std::fs::rename(&tmp, &target)?;
-        let _ = app.emit(
-            "freeflow://download-progress",
-            DownloadProgress {
-                name: stem,
-                downloaded,
-                total,
-            },
-        );
+        stream_download(&app, &url, &target, stem).await?;
     }
 
     let pipeline = state.pipeline.clone();
@@ -244,4 +262,106 @@ pub async fn download_whisper_model(
     }
 
     Ok(target.to_string_lossy().to_string())
+}
+
+// ─── Parakeet ────────────────────────────────────────────────────────────
+
+const PARAKEET_HF_REPO: &str = "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
+const PARAKEET_FILES: &[&str] = &[
+    "encoder.int8.onnx",
+    "decoder.int8.onnx",
+    "joiner.int8.onnx",
+    "tokens.txt",
+];
+
+#[tauri::command]
+pub async fn download_parakeet_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String> {
+    let model_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("models")
+        .join("parakeet-tdt-0.6b-v3-int8");
+    std::fs::create_dir_all(&model_dir)?;
+
+    for file in PARAKEET_FILES {
+        let target = model_dir.join(file);
+        if target.exists() {
+            continue;
+        }
+        let url = format!(
+            "https://huggingface.co/{PARAKEET_HF_REPO}/resolve/main/{file}?download=true"
+        );
+        stream_download(&app, &url, &target, file).await?;
+    }
+
+    let pipeline = state.pipeline.clone();
+    let dir_clone = model_dir.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let stt = ParakeetStt::load(dir_clone).map_err(|e| e.to_string())?;
+        stt.warmup_blocking();
+        pipeline.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    {
+        let mut s = state.pipeline.settings.lock();
+        s.parakeet_model_dir = Some(model_dir.clone());
+        s.stt_backend = crate::settings::SttBackend::Parakeet;
+        settings::save(&app, &s)?;
+    }
+
+    Ok(model_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn set_stt_backend(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    backend: crate::settings::SttBackend,
+) -> Result<()> {
+    use crate::settings::SttBackend;
+
+    let pipeline = state.pipeline.clone();
+    let (whisper_path, parakeet_dir) = {
+        let s = state.pipeline.settings.lock();
+        (s.whisper_model_path.clone(), s.parakeet_model_dir.clone())
+    };
+
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        match backend {
+            SttBackend::Whisper => match whisper_path {
+                Some(p) if p.exists() => {
+                    let stt = WhisperStt::load(p).map_err(|e| e.to_string())?;
+                    stt.warmup_blocking();
+                    pipeline.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
+                    Ok(())
+                }
+                _ => Err("no whisper model configured".to_string().into()),
+            },
+            SttBackend::Parakeet => match parakeet_dir {
+                Some(d) if d.exists() => {
+                    let stt = ParakeetStt::load(d).map_err(|e| e.to_string())?;
+                    stt.warmup_blocking();
+                    pipeline.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
+                    Ok(())
+                }
+                _ => Err("no parakeet model downloaded".to_string().into()),
+            },
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    {
+        let mut s = state.pipeline.settings.lock();
+        s.stt_backend = backend;
+        settings::save(&app, &s)?;
+    }
+    Ok(())
 }
