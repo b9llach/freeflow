@@ -3,8 +3,15 @@ use parking_lot::Mutex;
 use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use super::SttEngine;
+
+/// Hard upper bound on how long a single transcription is allowed to run.
+/// Parakeet TDT 0.6B int8 on CPU can be very slow on long clips — for 30 s
+/// of audio, expect 10-40 s of wall-clock. If we ever exceed this we bail
+/// out with an error toast instead of leaving the UI stuck on "Thinking".
+const TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// NVIDIA Parakeet TDT via sherpa-onnx. The model directory should contain
 /// four files: encoder ONNX, decoder ONNX, joiner ONNX, and tokens.txt.
@@ -125,12 +132,53 @@ impl SttEngine for ParakeetStt {
         _lang: &str,
     ) -> anyhow::Result<String> {
         let recognizer = self.inner.clone();
+        let samples_len = samples.len();
+        let audio_secs = samples_len as f32 / sample_rate as f32;
         let samples = samples.to_vec();
-        let text = tokio::task::spawn_blocking(move || {
+
+        tracing::info!(
+            samples = samples_len,
+            audio_secs,
+            "parakeet transcribe start"
+        );
+
+        // Run the C++ recognizer on a blocking thread. Wrap the whole
+        // spawn_blocking future in a timeout so a stuck decoder can't leave
+        // the pipeline permanently in the Thinking state.
+        let handle = tokio::task::spawn_blocking(move || {
+            let started = Instant::now();
             let mut guard = recognizer.lock();
-            guard.transcribe(sample_rate, &samples)
-        })
-        .await?;
+            let text = guard.transcribe(sample_rate, &samples);
+            (text, started.elapsed())
+        });
+
+        let (text, elapsed) = match tokio::time::timeout(TRANSCRIBE_TIMEOUT, handle).await {
+            Ok(Ok(pair)) => pair,
+            Ok(Err(join_err)) => {
+                tracing::error!(error = ?join_err, "parakeet worker panicked");
+                anyhow::bail!("parakeet worker crashed: {join_err}");
+            }
+            Err(_) => {
+                tracing::error!(
+                    audio_secs,
+                    timeout_secs = TRANSCRIBE_TIMEOUT.as_secs(),
+                    "parakeet transcribe timed out"
+                );
+                anyhow::bail!(
+                    "Parakeet timed out after {}s on {:.1}s of audio — try a shorter clip",
+                    TRANSCRIBE_TIMEOUT.as_secs(),
+                    audio_secs
+                );
+            }
+        };
+
+        tracing::info!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            audio_secs,
+            chars = text.len(),
+            "parakeet transcribe done"
+        );
+
         Ok(text.trim().to_string())
     }
 
