@@ -22,18 +22,34 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      try {
-        const s = await api.getSettings();
-        setSettings(s);
-        const h = await api.listHistory();
-        setHistory(h);
-        const r = await api.isRecording();
-        setStatus(r ? "recording" : "idle");
-      } catch (e) {
-        showToast(String(e));
+      // Retry the initial settings fetch a few times with backoff. On some
+      // first launches the invoke handler races the Tauri state manager and
+      // we get a transient "state not managed" style error before setup()
+      // has fully finished. Silently retrying makes the app come up clean.
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        if (cancelled) return;
+        try {
+          const s = await api.getSettings();
+          if (cancelled) return;
+          setSettings(s);
+          const h = await api.listHistory().catch(() => []);
+          if (!cancelled) setHistory(h);
+          const r = await api.isRecording().catch(() => false);
+          if (!cancelled) setStatus(r ? "recording" : "idle");
+          return;
+        } catch (e) {
+          lastErr = e;
+          await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+        }
       }
+      if (!cancelled) showToast(`Could not load settings: ${lastErr}`);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [showToast]);
 
   useEffect(() => {

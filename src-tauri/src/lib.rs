@@ -216,6 +216,7 @@ pub fn run() {
             commands::download_parakeet_model,
             commands::set_stt_backend,
             commands::get_platform,
+            commands::list_downloaded_whisper_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

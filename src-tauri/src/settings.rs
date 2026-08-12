@@ -3,6 +3,11 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Container-level default so ANY missing / renamed / added field falls back
+// to Settings::default() individually — instead of the whole file failing to
+// parse and dropping the user to full defaults. This is what lets old
+// settings.json files survive schema changes across app versions.
+#[serde(default)]
 pub struct Settings {
     pub ollama_base_url: String,
     pub ollama_model: String,
@@ -15,13 +20,9 @@ pub struct Settings {
     pub whisper_language: String,
     pub show_indicator: bool,
     pub llm_enabled: bool,
-    #[serde(default)]
     pub vocabulary: Vec<String>,
-    #[serde(default)]
     pub theme: Theme,
-    #[serde(default)]
     pub stt_backend: SttBackend,
-    #[serde(default)]
     pub parakeet_model_dir: Option<PathBuf>,
 }
 
@@ -101,9 +102,29 @@ pub fn settings_file(app: &tauri::AppHandle) -> std::path::PathBuf {
 
 pub fn load(app: &tauri::AppHandle) -> Settings {
     let path = settings_file(app);
-    match std::fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-        Err(_) => Settings::default(),
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(error = ?e, path = ?path, "could not read settings file");
+            }
+            return Settings::default();
+        }
+    };
+    match serde_json::from_str::<Settings>(&contents) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(
+                error = ?e,
+                path = ?path,
+                "settings.json failed to parse; falling back to defaults"
+            );
+            // Back up the broken file so the user can inspect / recover it,
+            // then overwrite with defaults so subsequent launches are clean.
+            let backup = path.with_extension("json.broken");
+            let _ = std::fs::rename(&path, &backup);
+            Settings::default()
+        }
     }
 }
 

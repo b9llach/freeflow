@@ -75,20 +75,30 @@ export const api = {
   setSttBackend: (backend: SttBackend) =>
     invoke<void>("set_stt_backend", { backend }),
   getPlatform: () => invoke<string>("get_platform"),
+  listDownloadedWhisperModels: () =>
+    invoke<string[]>("list_downloaded_whisper_models"),
 };
 
 export const WHISPER_MODEL_OPTIONS: {
   value: WhisperModelKind;
   label: string;
   size: string;
+  filename: string;
 }[] = [
-  { value: "tiny-en", label: "tiny.en (English only, fastest)", size: "~75 MB" },
-  { value: "base-en", label: "base.en (English only, recommended)", size: "~142 MB" },
-  { value: "small-en", label: "small.en (English only, more accurate)", size: "~466 MB" },
-  { value: "medium-en", label: "medium.en (English only, high accuracy)", size: "~1.5 GB" },
-  { value: "tiny", label: "tiny (multilingual)", size: "~75 MB" },
-  { value: "base", label: "base (multilingual)", size: "~142 MB" },
-  { value: "small", label: "small (multilingual)", size: "~466 MB" },
-  { value: "medium", label: "medium (multilingual)", size: "~1.5 GB" },
-  { value: "large-v3", label: "large-v3 (best quality)", size: "~2.9 GB" },
+  { value: "tiny-en",   label: "tiny.en (English only, fastest)",           size: "~75 MB",  filename: "ggml-tiny.en.bin" },
+  { value: "base-en",   label: "base.en (English only, recommended)",       size: "~142 MB", filename: "ggml-base.en.bin" },
+  { value: "small-en",  label: "small.en (English only, more accurate)",    size: "~466 MB", filename: "ggml-small.en.bin" },
+  { value: "medium-en", label: "medium.en (English only, high accuracy)",   size: "~1.5 GB", filename: "ggml-medium.en.bin" },
+  { value: "tiny",      label: "tiny (multilingual)",                       size: "~75 MB",  filename: "ggml-tiny.bin" },
+  { value: "base",      label: "base (multilingual)",                       size: "~142 MB", filename: "ggml-base.bin" },
+  { value: "small",     label: "small (multilingual)",                      size: "~466 MB", filename: "ggml-small.bin" },
+  { value: "medium",    label: "medium (multilingual)",                     size: "~1.5 GB", filename: "ggml-medium.bin" },
+  { value: "large-v3",  label: "large-v3 (best quality)",                   size: "~2.9 GB", filename: "ggml-large-v3.bin" },
 ];
+
+/** Filename portion of a full path on either Windows or POSIX. */
+export function basename(path: string | null | undefined): string {
+  if (!path) return "";
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || "";
+}

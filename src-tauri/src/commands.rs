@@ -98,6 +98,37 @@ pub fn get_platform() -> &'static str {
     std::env::consts::OS
 }
 
+/// Returns filenames of every `ggml-*.bin` currently sitting in the app's
+/// models directory, so the UI can label already-downloaded options and
+/// switch the primary button from "Download" to "Use downloaded".
+#[tauri::command]
+pub fn list_downloaded_whisper_models(app: AppHandle) -> Result<Vec<String>> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("models");
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut names = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(it) => it,
+        Err(_) => return Ok(vec![]),
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        if let Some(name) = entry.file_name().to_str() {
+            if name.starts_with("ggml-") && name.ends_with(".bin") {
+                names.push(name.to_string());
+            }
+        }
+    }
+    Ok(names)
+}
+
 #[tauri::command]
 pub fn set_hotkey_enabled(state: State<'_, AppState>, enabled: bool) -> Result<()> {
     state.hotkey_state.set_enabled(enabled);

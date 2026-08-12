@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   api,
+  basename,
   DownloadProgress,
   ModelInfo,
   Settings,
@@ -39,6 +40,18 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
   const [parakeetErr, setParakeetErr] = useState<string | null>(null);
   const [backendErr, setBackendErr] = useState<string | null>(null);
 
+  // Filenames of Whisper models already sitting in the app models dir.
+  const [downloadedWhisper, setDownloadedWhisper] = useState<string[]>([]);
+
+  const refreshDownloadedWhisper = async () => {
+    try {
+      const list = await api.listDownloadedWhisperModels();
+      setDownloadedWhisper(list);
+    } catch {
+      setDownloadedWhisper([]);
+    }
+  };
+
   const refreshModels = async () => {
     setLoadingModels(true);
     setModelErr(null);
@@ -69,6 +82,45 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
     };
   }, []);
 
+  // Refresh the downloaded list on mount and whenever the current whisper
+  // model path changes (e.g. after a fresh download or a manual pick).
+  useEffect(() => {
+    refreshDownloadedWhisper();
+  }, [settings.whisper_model_path]);
+
+  // Auto-select the download dropdown to match whatever whisper model is
+  // currently loaded, so the button reflects "Active" for it instead of
+  // silently sitting on the default "base-en" option.
+  useEffect(() => {
+    const current = basename(settings.whisper_model_path);
+    if (!current) return;
+    const match = WHISPER_MODEL_OPTIONS.find((o) => o.filename === current);
+    if (match && match.value !== downloadKind) {
+      setDownloadKind(match.value);
+    }
+    // We deliberately don't depend on downloadKind here — otherwise the user
+    // couldn't manually switch to a different option in the dropdown.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.whisper_model_path]);
+
+  const selectedOption = useMemo(
+    () => WHISPER_MODEL_OPTIONS.find((o) => o.value === downloadKind),
+    [downloadKind]
+  );
+  const currentWhisperFilename = basename(settings.whisper_model_path);
+  const isSelectedActive =
+    !!selectedOption && selectedOption.filename === currentWhisperFilename;
+  const isSelectedDownloaded =
+    !!selectedOption && downloadedWhisper.includes(selectedOption.filename);
+
+  const downloadButtonLabel = downloading
+    ? "..."
+    : isSelectedActive
+      ? "Active"
+      : isSelectedDownloaded
+        ? "Use downloaded"
+        : "Download";
+
   const update = <K extends keyof Settings>(k: K, v: Settings[K]) =>
     onChange({ ...settings, [k]: v });
 
@@ -88,7 +140,11 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
     setProgress(null);
     try {
       const path = await api.downloadWhisperModel(downloadKind);
+      // If the file already existed the backend skips the fetch, still loads
+      // it, and returns the path — so this codepath handles both "download"
+      // and "use already-downloaded" in one shot.
       update("whisper_model_path", path);
+      await refreshDownloadedWhisper();
     } catch (e) {
       setDownloadErr(String(e));
     } finally {
@@ -297,18 +353,31 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
               onChange={(e) => setDownloadKind(e.target.value as WhisperModelKind)}
               disabled={downloading}
             >
-              {WHISPER_MODEL_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label} — {o.size}
-                </option>
-              ))}
+              {WHISPER_MODEL_OPTIONS.map((o) => {
+                const dl = downloadedWhisper.includes(o.filename);
+                const active = o.filename === currentWhisperFilename;
+                const tag = active ? " · active" : dl ? " · downloaded" : "";
+                return (
+                  <option key={o.value} value={o.value}>
+                    {o.label} — {o.size}
+                    {tag}
+                  </option>
+                );
+              })}
             </select>
             <button
               className="btn small primary fit"
               onClick={handleDownload}
-              disabled={downloading}
+              disabled={downloading || isSelectedActive}
+              title={
+                isSelectedActive
+                  ? "Currently loaded model"
+                  : isSelectedDownloaded
+                    ? "Model already downloaded — load it"
+                    : "Download from Hugging Face"
+              }
             >
-              {downloading ? "..." : "Download"}
+              {downloadButtonLabel}
             </button>
           </div>
           {progress && (
