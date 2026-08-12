@@ -88,7 +88,8 @@ impl Pipeline {
         if rec.is_some() {
             return Ok(());
         }
-        *rec = Some(Recorder::start()?);
+        let device_name = self.settings.lock().input_device.clone();
+        *rec = Some(Recorder::start(device_name)?);
         *self.recording.lock() = true;
         if self.settings.lock().show_indicator {
             crate::indicator::show(&self.app);

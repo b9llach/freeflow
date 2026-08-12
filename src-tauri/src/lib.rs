@@ -217,6 +217,7 @@ pub fn run() {
             commands::set_stt_backend,
             commands::get_platform,
             commands::list_downloaded_whisper_models,
+            commands::list_input_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

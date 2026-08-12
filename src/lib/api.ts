@@ -21,6 +21,12 @@ export interface Settings {
   theme: Theme;
   stt_backend: SttBackend;
   parakeet_model_dir: string | null;
+  input_device: string | null;
+}
+
+export interface InputDeviceInfo {
+  name: string;
+  is_default: boolean;
 }
 
 export interface Transcription {
@@ -77,6 +83,7 @@ export const api = {
   getPlatform: () => invoke<string>("get_platform"),
   listDownloadedWhisperModels: () =>
     invoke<string[]>("list_downloaded_whisper_models"),
+  listInputDevices: () => invoke<InputDeviceInfo[]>("list_input_devices"),
 };
 
 export const WHISPER_MODEL_OPTIONS: {

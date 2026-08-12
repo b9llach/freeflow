@@ -98,6 +98,14 @@ pub fn get_platform() -> &'static str {
     std::env::consts::OS
 }
 
+/// Enumerate every input device the audio host exposes, marking the one
+/// cpal reports as the system default. Used by the settings UI to populate
+/// the microphone picker.
+#[tauri::command]
+pub fn list_input_devices() -> Result<Vec<crate::audio::InputDeviceInfo>> {
+    crate::audio::list_input_devices().map_err(Into::into)
+}
+
 /// Returns filenames of every `ggml-*.bin` currently sitting in the app's
 /// models directory, so the UI can label already-downloaded options and
 /// switch the primary button from "Download" to "Use downloaded".

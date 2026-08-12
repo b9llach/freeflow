@@ -3,6 +3,7 @@ import {
   api,
   basename,
   DownloadProgress,
+  InputDeviceInfo,
   ModelInfo,
   Settings,
   SttBackend,
@@ -42,6 +43,29 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
 
   // Filenames of Whisper models already sitting in the app models dir.
   const [downloadedWhisper, setDownloadedWhisper] = useState<string[]>([]);
+
+  // Available cpal input devices, with the system default flagged.
+  const [inputDevices, setInputDevices] = useState<InputDeviceInfo[]>([]);
+  const [inputDevicesErr, setInputDevicesErr] = useState<string | null>(null);
+  const [loadingInputs, setLoadingInputs] = useState(false);
+
+  const refreshInputDevices = async () => {
+    setLoadingInputs(true);
+    setInputDevicesErr(null);
+    try {
+      const list = await api.listInputDevices();
+      setInputDevices(list);
+    } catch (e) {
+      setInputDevicesErr(String(e));
+      setInputDevices([]);
+    } finally {
+      setLoadingInputs(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshInputDevices();
+  }, []);
 
   const refreshDownloadedWhisper = async () => {
     try {
@@ -306,6 +330,48 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
 
       <div className="rail-section">
         <h2>Speech to text</h2>
+        <div className="field">
+          <label>Microphone</label>
+          <div className="row">
+            <select
+              value={settings.input_device ?? ""}
+              onChange={(e) =>
+                update("input_device", e.target.value || null)
+              }
+            >
+              <option value="">
+                {(() => {
+                  const def = inputDevices.find((d) => d.is_default);
+                  return def
+                    ? `System default (${def.name})`
+                    : "System default";
+                })()}
+              </option>
+              {inputDevices.map((d) => (
+                <option key={d.name} value={d.name}>
+                  {d.name}
+                  {d.is_default ? " · default" : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn small fit"
+              onClick={refreshInputDevices}
+              disabled={loadingInputs}
+            >
+              {loadingInputs ? "..." : "Refresh"}
+            </button>
+          </div>
+          {inputDevicesErr && (
+            <div className="field-error">{inputDevicesErr}</div>
+          )}
+          {inputDevices.length === 0 && !loadingInputs && !inputDevicesErr && (
+            <div className="field-hint">
+              No input devices detected. On macOS, grant Freeflow microphone
+              access in System Settings and click Refresh.
+            </div>
+          )}
+        </div>
         <div className="field">
           <label>Engine</label>
           <div className="seg">

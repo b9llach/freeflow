@@ -24,6 +24,9 @@ pub struct Settings {
     pub theme: Theme,
     pub stt_backend: SttBackend,
     pub parakeet_model_dir: Option<PathBuf>,
+    /// Human-readable cpal device name. `None` uses whatever cpal reports as
+    /// the system default at recording time.
+    pub input_device: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,6 +80,7 @@ impl Default for Settings {
             theme: Theme::Dark,
             stt_backend: SttBackend::Whisper,
             parakeet_model_dir: None,
+            input_device: None,
         }
     }
 }

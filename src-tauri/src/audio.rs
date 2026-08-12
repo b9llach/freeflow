@@ -1,11 +1,61 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputDeviceInfo {
+    pub name: String,
+    pub is_default: bool,
+}
+
+/// Enumerate every input device the default host exposes. The first entry
+/// with `is_default: true` (if any) is the system default. Empty vec means
+/// the host reported no input devices — likely a permission problem on
+/// macOS or a driver issue on Windows.
+pub fn list_input_devices() -> anyhow::Result<Vec<InputDeviceInfo>> {
+    let host = cpal::default_host();
+    let default_name = host
+        .default_input_device()
+        .and_then(|d| d.name().ok());
+
+    let mut out = Vec::new();
+    if let Ok(iter) = host.input_devices() {
+        for device in iter {
+            if let Ok(name) = device.name() {
+                let is_default = default_name.as_deref() == Some(name.as_str());
+                out.push(InputDeviceInfo { name, is_default });
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn pick_input_device(
+    host: &cpal::Host,
+    name: Option<&str>,
+) -> anyhow::Result<cpal::Device> {
+    if let Some(target) = name {
+        if let Ok(iter) = host.input_devices() {
+            for device in iter {
+                if device.name().ok().as_deref() == Some(target) {
+                    return Ok(device);
+                }
+            }
+        }
+        tracing::warn!(
+            requested = target,
+            "requested input device not found, falling back to system default"
+        );
+    }
+    host.default_input_device()
+        .ok_or_else(|| anyhow::anyhow!("no default input device"))
+}
 
 pub struct Recorder {
     shared: Arc<Mutex<Vec<f32>>>,
@@ -16,7 +66,11 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn start() -> anyhow::Result<Self> {
+    /// Start capturing from the named device, or the system default if
+    /// `device_name` is `None`. If the named device isn't present anymore
+    /// (unplugged headset, changed system default) we log a warning and
+    /// fall back to the current system default instead of erroring out.
+    pub fn start(device_name: Option<String>) -> anyhow::Result<Self> {
         let shared: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(16_000 * 30)));
         let stop_flag = Arc::new(AtomicBool::new(false));
 
@@ -27,9 +81,7 @@ impl Recorder {
         let join = thread::spawn(move || {
             let built: anyhow::Result<(cpal::Stream, u32, u16)> = (|| {
                 let host = cpal::default_host();
-                let device = host
-                    .default_input_device()
-                    .ok_or_else(|| anyhow::anyhow!("no default input device"))?;
+                let device = pick_input_device(&host, device_name.as_deref())?;
                 let config = device.default_input_config()?;
                 let sr = config.sample_rate().0;
                 let ch = config.channels();
