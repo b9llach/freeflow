@@ -35,7 +35,23 @@ pub fn run() {
         .try_init()
         .ok();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Single-instance MUST be the first plugin registered. The callback
+    // fires on the *original* running instance when a second launch is
+    // attempted; that second process then exits immediately. We use it to
+    // pull the existing main window forward so double-clicking the tray
+    // icon or re-running the exe just re-focuses instead of spawning a
+    // duplicate freeflow2.exe (which would double-install the hotkey
+    // hook, double-grab the mic, etc).
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main(app);
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
