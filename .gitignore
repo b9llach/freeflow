@@ -14,6 +14,7 @@ dist-ssr
 src-tauri/target
 src-tauri/Cargo.lock
 src-tauri/gen/schemas
+src-tauri/runtime-dlls
 models/*.bin
 models/*.gguf
 *.log

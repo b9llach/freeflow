@@ -1,6 +1,6 @@
 [package]
 name = "freeflow2"
-version = "0.1.4"
+version = "0.1.5"
 description = "Dictation with LLM cleanup via Ollama"
 edition = "2021"
 rust-version = "1.77"
