@@ -40,6 +40,13 @@ endif()
 
 # whisper.cpp / ggml specific knobs. Naming has drifted between versions
 # (WHISPER_* → GGML_*), so we set both so at least one wins.
+#
+# We use `set(... CACHE ...)` WITHOUT `FORCE` on the initial declaration.
+# whisper.cpp's outer CMakeLists uses `cmake_minimum_required(VERSION 3.5)`
+# which sets CMP0077 policy to OLD → its `option()` calls FORCE-overwrite
+# any pre-existing cache. To beat that we ALSO override via `-D` on the
+# cmake command line via CMAKE_PROJECT_INCLUDE_BEFORE below, which runs
+# after `project()` and can safely re-cache with FORCE.
 set(GGML_NATIVE       OFF CACHE BOOL "" FORCE)
 set(GGML_AVX512       OFF CACHE BOOL "" FORCE)
 set(GGML_AVX512_VBMI  OFF CACHE BOOL "" FORCE)
@@ -54,3 +61,15 @@ set(GGML_AVX          ON  CACHE BOOL "" FORCE)
 set(GGML_AVX2         ON  CACHE BOOL "" FORCE)
 set(GGML_FMA          ON  CACHE BOOL "" FORCE)
 set(GGML_F16C         ON  CACHE BOOL "" FORCE)
+
+# Point CMAKE_PROJECT_INCLUDE_BEFORE at a helper that re-forces the
+# variables AFTER project() runs (which is when whisper.cpp's option()
+# calls fire and would otherwise re-default them under CMP0077-OLD).
+set(CMAKE_PROJECT_INCLUDE_BEFORE
+    "${CMAKE_CURRENT_LIST_DIR}/toolchain-windows-project-include.cmake")
+
+message(STATUS "===== FREEFLOW TOOLCHAIN LOADED =====")
+message(STATUS "  GGML_NATIVE forced -> ${GGML_NATIVE}")
+message(STATUS "  GGML_AVX forced    -> ${GGML_AVX}")
+message(STATUS "  GGML_AVX512 forced -> ${GGML_AVX512}")
+message(STATUS "  CMAKE_PROJECT_INCLUDE_BEFORE -> ${CMAKE_PROJECT_INCLUDE_BEFORE}")
