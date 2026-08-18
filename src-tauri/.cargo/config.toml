@@ -1,0 +1,33 @@
+# Statically link the MSVC C runtime on Windows so freeflow2.exe doesn't
+# depend on vcruntime140.dll / msvcp140.dll being installed on the target
+# machine. Without this, users without a matching Visual C++ Redistributable
+# see the process crash the moment it hits heavy C++ code paths (e.g.
+# whisper.cpp's inference loop during model warmup).
+#
+# CFLAGS/CXXFLAGS force any C/C++ code that dependency `cc` crates build
+# (whisper-rs-sys is the main one — it compiles whisper.cpp) to also link
+# the static runtime, so the runtime library ABI matches everywhere.
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+# whisper-rs-sys and sherpa-rs-sys drive CMake; force cmake-generated
+# projects to also use the static MSVC runtime so their .lib archives are
+# ABI-compatible with the rest of the exe (which uses static CRT via the
+# +crt-static rustflag above). `cc`-based sys crates read RUSTFLAGS and
+# match the CRT automatically, no CFLAGS override needed.
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
+# Pin the cmake generator. cmake-rs's auto-detect tries to name the
+# newest VS toolchain it finds on the machine, but if that VS release
+# postdates the local cmake install (e.g. VS 18 / 2026 on cmake 3.29)
+# cmake refuses the generator string and the build fails. VS 17 (2022)
+# is what stable Rust MSVC targets ship for and it's on every dev box
+# with recent Build Tools.
+CMAKE_GENERATOR = "Visual Studio 17 2022"

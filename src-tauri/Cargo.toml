@@ -1,6 +1,6 @@
 [package]
 name = "freeflow2"
-version = "0.1.5"
+version = "0.1.6"
 description = "Dictation with LLM cleanup via Ollama"
 edition = "2021"
 rust-version = "1.77"
@@ -38,6 +38,7 @@ once_cell = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
 uuid = { version = "1", features = ["v4", "serde"] }
 futures-util = "0.3"
 

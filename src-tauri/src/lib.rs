@@ -27,6 +27,13 @@ use crate::stt::{parakeet::ParakeetStt, whisper::WhisperStt, SttEngine};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Force a full backtrace on every panic — we need this to diagnose
+    // crashes on user machines where we don't have a console attached.
+    if std::env::var_os("RUST_BACKTRACE").is_none() {
+        std::env::set_var("RUST_BACKTRACE", "1");
+    }
+    install_panic_hook();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -237,6 +244,60 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Write panics to `<app_config_or_data_dir>/crash.log` in addition to the
+/// default console output. Without this a crash on a user's machine is a
+/// silent black box: the process disappears with no trace.
+///
+/// We wrap std::panic::set_hook rather than replacing it so the default
+/// stderr output still fires when there's a console.
+fn install_panic_hook() {
+    // Resolve a stable location on Windows / macOS / Linux without needing
+    // an AppHandle — the panic hook may fire before Tauri is up.
+    let dir = dirs::data_dir()
+        .or_else(dirs::config_dir)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("com.freeflow.app");
+    let _ = std::fs::create_dir_all(&dir);
+    let log_path = dir.join("crash.log");
+
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Timestamp + panic message + location + full backtrace.
+        let ts = chrono::Utc::now().to_rfc3339();
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "<non-string panic payload>".to_string()
+        };
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown location>".to_string());
+
+        let entry = format!(
+            "\n\n===== PANIC {ts} =====\nversion: {version}\nlocation: {location}\nmessage: {payload}\n\nbacktrace:\n{backtrace}\n",
+            version = env!("CARGO_PKG_VERSION"),
+        );
+
+        // Append (not overwrite) so we keep prior crash history.
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            use std::io::Write;
+            let _ = f.write_all(entry.as_bytes());
+            let _ = f.flush();
+        }
+
+        // Let the default hook run too so any attached console still prints.
+        default(info);
+    }));
 }
 
 fn show_main(app: &tauri::AppHandle) {
