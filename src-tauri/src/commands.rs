@@ -276,6 +276,11 @@ pub async fn download_whisper_model(
     std::fs::create_dir_all(&models_dir)?;
     let target = models_dir.join(&file_name);
 
+    crate::log_step(&format!(
+        "whisper.download start model={} target={:?}",
+        stem, target
+    ));
+
     if !target.exists() {
         let url = format!(
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{file_name}?download=true"
@@ -283,12 +288,69 @@ pub async fn download_whisper_model(
         stream_download(&app, &url, &target, stem).await?;
     }
 
+    let final_size = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+    crate::log_step(&format!(
+        "whisper.download complete size={} bytes",
+        final_size
+    ));
+
     let pipeline = state.pipeline.clone();
     let target_clone = target.clone();
+    let stem_owned = stem.to_string();
     tokio::task::spawn_blocking(move || -> Result<()> {
-        let stt = WhisperStt::load(target_clone).map_err(|e| e.to_string())?;
-        stt.warmup_blocking();
+        // Wrap the native-code entry points (WhisperStt::load, which mmaps
+        // the model and constructs a whisper.cpp context, and warmup which
+        // runs a full 500ms inference pass) in catch_unwind. A Rust panic
+        // in either would otherwise unwind through spawn_blocking and, in
+        // release mode, just terminate the worker without a diagnostic.
+        // We still can't catch a native abort() / access violation this
+        // way — that's what the SEH handler in lib.rs is for — but this
+        // does at least surface library-level Rust panics with a proper
+        // message.
+
+        crate::log_step(&format!(
+            "whisper.load start path={:?}", target_clone
+        ));
+        let load_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            WhisperStt::load(target_clone.clone())
+        }));
+        let stt = match load_result {
+            Ok(Ok(stt)) => {
+                crate::log_step("whisper.load ok");
+                stt
+            }
+            Ok(Err(e)) => {
+                let msg = format!("whisper.load returned Err: {e}");
+                crate::log_step(&msg);
+                return Err(msg.into());
+            }
+            Err(panic) => {
+                let msg = format!("whisper.load PANICKED: {:?}", panic_msg(&panic));
+                crate::log_step(&msg);
+                return Err(msg.into());
+            }
+        };
+
+        crate::log_step(&format!("whisper.warmup start model={}", stem_owned));
+        let warmup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            stt.warmup_blocking();
+        }));
+        match warmup_result {
+            Ok(()) => crate::log_step("whisper.warmup ok"),
+            Err(panic) => {
+                // Warmup is an optimization, not a requirement. If it
+                // panics, log it and continue — the model is still loaded
+                // and real transcriptions will just pay the mmap page-in
+                // cost on the first PTT press instead.
+                crate::log_step(&format!(
+                    "whisper.warmup PANICKED (continuing): {:?}",
+                    panic_msg(&panic)
+                ));
+            }
+        }
+
         pipeline.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
+        crate::log_step("whisper.load pipeline set_stt done");
         Ok(())
     })
     .await
@@ -301,6 +363,16 @@ pub async fn download_whisper_model(
     }
 
     Ok(target.to_string_lossy().to_string())
+}
+
+fn panic_msg(panic: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    }
 }
 
 // ─── Parakeet ────────────────────────────────────────────────────────────

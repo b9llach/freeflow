@@ -33,6 +33,9 @@ pub fn run() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
     install_panic_hook();
+    #[cfg(windows)]
+    install_windows_seh_handler();
+    write_startup_diagnostics();
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -246,6 +249,175 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// Resolve `<local_app_data>/com.freeflow.app/crash.log` on every platform,
+/// creating the directory if it doesn't exist. Used by every diagnostic
+/// sink (Rust panic hook, Windows SEH handler, startup dump) so they all
+/// funnel into the same file the user is asked to share.
+fn crash_log_path() -> std::path::PathBuf {
+    let dir = dirs::data_dir()
+        .or_else(dirs::config_dir)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("com.freeflow.app");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("crash.log")
+}
+
+/// Append a single timestamped line to the crash log. Used by
+/// `commands.rs` to breadcrumb the exact step it's on during Whisper
+/// load/warmup so a subsequent native crash shows what we were doing.
+pub fn log_step(msg: &str) {
+    let ts = chrono::Utc::now().to_rfc3339();
+    let line = format!("[{ts}] {msg}\n");
+    append_crash_log(&line);
+}
+
+/// Append `entry` to the crash log. Silently no-ops on I/O error since
+/// there is nowhere else to report it from a panic / native exception
+/// context.
+fn append_crash_log(entry: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(crash_log_path())
+    {
+        use std::io::Write;
+        let _ = f.write_all(entry.as_bytes());
+        let _ = f.flush();
+    }
+}
+
+/// One-time startup dump so every crash.log we get back from a user has
+/// the machine's baseline context at the top: app version, OS, CPU model,
+/// and detected SIMD feature flags. This is what tells us whether a native
+/// crash is a CPU-feature mismatch (whisper.cpp assuming AVX2 on a machine
+/// that doesn't have it, etc.) or something else entirely.
+fn write_startup_diagnostics() {
+    let ts = chrono::Utc::now().to_rfc3339();
+    let mut entry = format!(
+        "\n===== STARTUP {ts} =====\n\
+         version:  {version}\n\
+         os:       {os} / {arch}\n",
+        version = env!("CARGO_PKG_VERSION"),
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+    );
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        entry.push_str(&format!(
+            "cpu:      sse2={} avx={} avx2={} fma={} avx512f={} f16c={} bmi1={} bmi2={}\n",
+            is_x86_feature_detected!("sse2"),
+            is_x86_feature_detected!("avx"),
+            is_x86_feature_detected!("avx2"),
+            is_x86_feature_detected!("fma"),
+            is_x86_feature_detected!("avx512f"),
+            is_x86_feature_detected!("f16c"),
+            is_x86_feature_detected!("bmi1"),
+            is_x86_feature_detected!("bmi2"),
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::*;
+        unsafe {
+            let mut info = SYSTEM_INFO::default();
+            GetNativeSystemInfo(&mut info);
+            entry.push_str(&format!(
+                "cores:    {}\npage_sz:  {} bytes\n",
+                info.dwNumberOfProcessors, info.dwPageSize,
+            ));
+        }
+    }
+
+    append_crash_log(&entry);
+}
+
+/// Native (SEH) exception handler for Windows. Catches things Rust's panic
+/// system never sees — access violations, illegal instructions, stack
+/// overflows, divide-by-zero, missing-DLL entry-point resolution failures —
+/// and writes the exception code + faulting address to crash.log before
+/// letting Windows terminate the process the usual way.
+///
+/// This is the diagnostic we need when whisper.cpp / onnxruntime dereference
+/// a bad pointer or execute an instruction the CPU doesn't support: neither
+/// of those trips Rust's panic hook, so without this the crash is silent.
+#[cfg(windows)]
+unsafe extern "system" fn windows_seh_handler(
+    info: *const windows::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
+) -> i32 {
+    const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
+
+    if info.is_null() {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    let record = (*info).ExceptionRecord;
+    if record.is_null() {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    let code = (*record).ExceptionCode.0 as u32;
+    let addr = (*record).ExceptionAddress as usize;
+
+    // Names of the exception codes we're most likely to see out of
+    // whisper.cpp / onnxruntime / sherpa-onnx.
+    let name = match code {
+        0xC000_0005 => "EXCEPTION_ACCESS_VIOLATION",
+        0xC000_001D => "EXCEPTION_ILLEGAL_INSTRUCTION",
+        0xC000_0025 => "EXCEPTION_NONCONTINUABLE_EXCEPTION",
+        0xC000_008C => "EXCEPTION_ARRAY_BOUNDS_EXCEEDED",
+        0xC000_008E => "EXCEPTION_FLT_DIVIDE_BY_ZERO",
+        0xC000_0094 => "EXCEPTION_INT_DIVIDE_BY_ZERO",
+        0xC000_00FD => "EXCEPTION_STACK_OVERFLOW",
+        0xC000_0135 => "STATUS_DLL_NOT_FOUND",
+        0xC000_0139 => "STATUS_ENTRYPOINT_NOT_FOUND",
+        0xC000_0409 => "STATUS_STACK_BUFFER_OVERRUN",
+        0x8000_0003 => "EXCEPTION_BREAKPOINT",
+        _ => "UNKNOWN",
+    };
+
+    // Extra info specific to access violations: parameter[0] is the
+    // read/write flag (0=read, 1=write, 8=DEP), parameter[1] is the
+    // faulting virtual address.
+    let (rw, fault_addr) = if code == 0xC000_0005 && (*record).NumberParameters >= 2 {
+        let params = &(*record).ExceptionInformation;
+        let kind = match params[0] {
+            0 => "read",
+            1 => "write",
+            8 => "DEP",
+            _ => "unknown-op",
+        };
+        (kind, params[1] as usize)
+    } else {
+        ("n/a", 0usize)
+    };
+
+    let ts = chrono::Utc::now().to_rfc3339();
+    let entry = format!(
+        "\n===== NATIVE EXCEPTION {ts} =====\n\
+         version:      {version}\n\
+         code:         0x{code:08X} ({name})\n\
+         address:      0x{addr:016X}\n\
+         access:       {rw} @ 0x{fault_addr:016X}\n",
+        version = env!("CARGO_PKG_VERSION"),
+    );
+    append_crash_log(&entry);
+
+    // Continue Windows's default handling (terminate + WerFault) so the
+    // process actually dies. Returning EXCEPTION_EXECUTE_HANDLER (1)
+    // would swallow the exception and leave the process in an undefined
+    // state, which is worse than letting it die cleanly.
+    EXCEPTION_CONTINUE_SEARCH
+}
+
+#[cfg(windows)]
+fn install_windows_seh_handler() {
+    use windows::Win32::System::Diagnostics::Debug::SetUnhandledExceptionFilter;
+    unsafe {
+        SetUnhandledExceptionFilter(Some(windows_seh_handler));
+    }
+}
+
 /// Write panics to `<app_config_or_data_dir>/crash.log` in addition to the
 /// default console output. Without this a crash on a user's machine is a
 /// silent black box: the process disappears with no trace.
@@ -253,15 +425,6 @@ pub fn run() {
 /// We wrap std::panic::set_hook rather than replacing it so the default
 /// stderr output still fires when there's a console.
 fn install_panic_hook() {
-    // Resolve a stable location on Windows / macOS / Linux without needing
-    // an AppHandle — the panic hook may fire before Tauri is up.
-    let dir = dirs::data_dir()
-        .or_else(dirs::config_dir)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("com.freeflow.app");
-    let _ = std::fs::create_dir_all(&dir);
-    let log_path = dir.join("crash.log");
-
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // Timestamp + panic message + location + full backtrace.
@@ -280,20 +443,14 @@ fn install_panic_hook() {
             .unwrap_or_else(|| "<unknown location>".to_string());
 
         let entry = format!(
-            "\n\n===== PANIC {ts} =====\nversion: {version}\nlocation: {location}\nmessage: {payload}\n\nbacktrace:\n{backtrace}\n",
+            "\n===== PANIC {ts} =====\n\
+             version:  {version}\n\
+             location: {location}\n\
+             message:  {payload}\n\
+             \nbacktrace:\n{backtrace}\n",
             version = env!("CARGO_PKG_VERSION"),
         );
-
-        // Append (not overwrite) so we keep prior crash history.
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            use std::io::Write;
-            let _ = f.write_all(entry.as_bytes());
-            let _ = f.flush();
-        }
+        append_crash_log(&entry);
 
         // Let the default hook run too so any attached console still prints.
         default(info);
