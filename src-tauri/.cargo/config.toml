@@ -18,12 +18,14 @@ rustflags = ["-C", "target-feature=+crt-static"]
 rustflags = ["-C", "target-feature=+crt-static"]
 
 [env]
-# whisper-rs-sys and sherpa-rs-sys drive CMake; force cmake-generated
-# projects to also use the static MSVC runtime so their .lib archives are
+# Point every cmake-driven sys crate (whisper-rs-sys, primarily) at our
+# toolchain file. It caps whisper.cpp codegen at AVX2 so the shipped exe
+# doesn't require AVX-512 that the dev machine has but user machines
+# usually don't (EXCEPTION_ILLEGAL_INSTRUCTION at model load). It also
+# forces the static MSVC C++ runtime so the resulting .lib archives are
 # ABI-compatible with the rest of the exe (which uses static CRT via the
-# +crt-static rustflag above). `cc`-based sys crates read RUSTFLAGS and
-# match the CRT automatically, no CFLAGS override needed.
-CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
+# +crt-static rustflag above).
+CMAKE_TOOLCHAIN_FILE = { value = "toolchain-windows.cmake", relative = true }
 # Pin the cmake generator. cmake-rs's auto-detect tries to name the
 # newest VS toolchain it finds on the machine, but if that VS release
 # postdates the local cmake install (e.g. VS 18 / 2026 on cmake 3.29)
