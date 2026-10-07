@@ -5,6 +5,8 @@ import {
   DownloadProgress,
   InputDeviceInfo,
   ModelInfo,
+  PhononProgress,
+  PhononStatus,
   Settings,
   SttBackend,
   WHISPER_MODEL_OPTIONS,
@@ -43,6 +45,61 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
   const [serverTest, setServerTest] = useState<{ ok: boolean; msg: string } | null>(
     null
   );
+
+  const [phonon, setPhonon] = useState<PhononStatus | null>(null);
+  const [phononBusy, setPhononBusy] = useState(false);
+  const [phononStep, setPhononStep] = useState<PhononProgress | null>(null);
+  const [phononErr, setPhononErr] = useState<string | null>(null);
+
+  const refreshPhonon = async () => {
+    try {
+      setPhonon(await api.phononStatus());
+    } catch (e) {
+      setPhononErr(String(e));
+    }
+  };
+
+  useEffect(() => {
+    refreshPhonon();
+    let un: (() => void) | undefined;
+    listen<PhononProgress>("freeflow://phonon-setup", (ev) =>
+      setPhononStep(ev.payload)
+    ).then((f) => (un = f));
+    return () => un?.();
+  }, []);
+
+  const handlePhononInstall = async () => {
+    setPhononErr(null);
+    setPhononBusy(true);
+    setPhononStep(null);
+    try {
+      await api.phononInstall();
+      onChange({ ...settings, stt_backend: "phonon" });
+    } catch (e) {
+      setPhononErr(String(e));
+    } finally {
+      setPhononBusy(false);
+      refreshPhonon();
+    }
+  };
+
+  const handlePhononUninstall = async () => {
+    if (!window.confirm("Remove Phonon-2 and free its disk space (about 1.6 GB)?")) return;
+    setPhononErr(null);
+    setPhononBusy(true);
+    try {
+      await api.phononUninstall();
+      if (settings.stt_backend === "phonon") {
+        onChange({ ...settings, stt_backend: "whisper" });
+      }
+    } catch (e) {
+      setPhononErr(String(e));
+    } finally {
+      setPhononBusy(false);
+      setPhononStep(null);
+      refreshPhonon();
+    }
+  };
 
   // Filenames of Whisper models already sitting in the app models dir.
   const [downloadedWhisper, setDownloadedWhisper] = useState<string[]>([]);
@@ -371,24 +428,103 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
             <button
               className={settings.stt_backend === "whisper" ? "active" : ""}
               onClick={() => handleBackendChange("whisper")}
-              disabled={switchingBackend}
+              disabled={switchingBackend || phononBusy}
             >
               Whisper
             </button>
             <button
+              className={settings.stt_backend === "phonon" ? "active" : ""}
+              onClick={() => handleBackendChange("phonon")}
+              disabled={switchingBackend || phononBusy}
+            >
+              Phonon-2
+            </button>
+            <button
               className={settings.stt_backend === "http" ? "active" : ""}
               onClick={() => handleBackendChange("http")}
-              disabled={switchingBackend}
+              disabled={switchingBackend || phononBusy}
             >
-              Phonon-2 server
+              Remote
             </button>
           </div>
           {backendErr && <div className="field-error">{backendErr}</div>}
           <div className="field-hint">
-            Whisper runs inside the app. Phonon-2 runs in a separate speech
-            server that Freeflow talks to over HTTP.
+            Whisper runs inside the app. Phonon-2 is fast and light on the
+            CPU; Freeflow sets it up and runs it for you. Remote connects to a
+            speech server you run yourself.
           </div>
         </div>
+
+        {settings.stt_backend === "phonon" && (
+          <div className="field">
+            <label>Phonon-2</label>
+            {phonon && !phonon.supported && (
+              <div className="field-error">
+                Automatic setup is not available on this system.
+              </div>
+            )}
+            {phonon?.supported && phonon.installed && !phononBusy && (
+              <div className="field-hint">
+                {phonon.running
+                  ? "Installed and running."
+                  : "Installed. The engine starts on first use."}
+              </div>
+            )}
+            {phonon?.supported && !phonon.installed && !phononBusy && (
+              <div className="field-hint">
+                Phonon-2 is not set up yet. Setup downloads about 700 MB
+                (a private Python and the speech engine) plus a 160 MB model,
+                and needs no other software. It only has to run once.
+              </div>
+            )}
+            {phononBusy && (
+              <>
+                <div className="field-hint">
+                  {phononStep?.message ?? "Starting setup"}
+                </div>
+                <div className="progress">
+                  <div
+                    className="progress-bar"
+                    style={{
+                      width:
+                        phononStep?.percent != null
+                          ? `${Math.min(100, phononStep.percent)}%`
+                          : "30%",
+                    }}
+                  />
+                </div>
+                {phononStep?.detail && (
+                  <div className="field-hint">{phononStep.detail}</div>
+                )}
+              </>
+            )}
+            {phononErr && (
+              <div className="field-error" style={{ whiteSpace: "pre-wrap" }}>
+                {phononErr}
+              </div>
+            )}
+            <div className="row" style={{ marginTop: 8 }}>
+              {phonon?.supported && !phonon.installed && (
+                <button
+                  className="btn small primary"
+                  onClick={handlePhononInstall}
+                  disabled={phononBusy}
+                >
+                  {phononBusy ? "Setting up..." : phononErr ? "Retry setup" : "Set up Phonon-2"}
+                </button>
+              )}
+              {phonon?.installed && (
+                <button
+                  className="btn small"
+                  onClick={handlePhononUninstall}
+                  disabled={phononBusy}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {settings.stt_backend === "whisper" && (
           <>

@@ -7,7 +7,7 @@ A Tauri 2 desktop dictation tool. Hold a single hotkey, speak, release — Whisp
 ## Features
 
 - **Local Whisper STT** via `whisper-rs` / `whisper.cpp` — no cloud, no API keys
-- **Optional Phonon-2 speech server** — point Freeflow at any OpenAI-compatible `/audio/transcriptions` endpoint (such as `fermion serve phonon-2`), local or on another machine
+- **Optional Phonon-2 engine** — Freeflow sets up and runs it for you (private Python, hidden local server), or point at any OpenAI-compatible `/audio/transcriptions` endpoint
 - **LLM cleanup through Ollama** using the OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints — point it at localhost or any remote box
 - **User vocabulary / facts** that get injected into the cleanup prompt so proper nouns and product names always come out spelled right
 - **Single-key push-to-talk or toggle mode** with left/right modifier distinction — bind right Ctrl only and left Ctrl won't fire it
@@ -74,26 +74,22 @@ Downloaded models land in `%APPDATA%/com.freeflow.app/models/ggml-*.bin`. You ca
 
 On startup, Freeflow loads the model on a background thread and then runs a short silent transcription to force the weights into RAM and warm the internal caches — so the first real hotkey press doesn't pay the mmap page-in cost.
 
-## Phonon-2 speech server (optional engine)
+## Phonon-2 engine (optional)
 
-Freeflow can send audio to an OpenAI-compatible speech server instead of running Whisper inside the app. It is set up for [Phonon-2](https://huggingface.co/FermionResearch/Phonon-2), a 2-bit quantized derivative of NVIDIA Parakeet TDT 0.6B v3 (about 164 MB).
+[Phonon-2](https://huggingface.co/FermionResearch/Phonon-2) is a 2-bit quantized derivative of NVIDIA Parakeet TDT 0.6B v3 (about 164 MB). It is a speech-to-text model, so it replaces Whisper, not the Ollama cleanup step. Its engine is Python, so Freeflow runs it as a managed background process.
 
-Phonon-2 is a speech-to-text model, so it replaces Whisper, not the Ollama cleanup step. Its engine is Python (MLX on Apple silicon, PyTorch on Windows and Linux CPU), so it runs as its own process rather than inside the Freeflow binary:
+In Settings, Speech to text, choose **Phonon-2** and click **Set up Phonon-2**. Freeflow then, with no other software required:
 
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install fermion-research
-# Apple silicon:
-pip install mlx mlx-audio mlx-lm soundfile scipy zstandard
-# Windows / Linux CPU:
-pip install torch safetensors soundfile scipy zstandard
-fermion serve phonon-2
-```
+1. Downloads a pinned, checksum-verified copy of [uv](https://github.com/astral-sh/uv).
+2. Creates a private Python 3.12 environment inside the app data folder (`phonon/`).
+3. Installs `fermion-research` and its runtime (PyTorch on Windows, MLX on Apple silicon).
+4. Starts `fermion serve phonon-2` as a hidden process on `127.0.0.1:18765`, which downloads the model on first start.
 
-CPU and CUDA Docker images are also published; see the model card. The server listens on `http://127.0.0.1:8000/v1` by default.
+Setup is about 1.6 GB on disk and runs once. The server starts with the app, restarts on demand if it stops, and is stopped when Freeflow exits (on Windows through a Job Object, so it is also cleaned up if the app crashes). **Remove** in the same panel deletes everything. Server output is written to `phonon/server.log`.
 
-Then in Settings, Speech to text, set **Engine** to **Phonon-2 server**. The URL field defaults to `http://127.0.0.1:8000/v1`, and the **Test** button pings the server's `/models` route so a stopped server is obvious before your first dictation. Freeflow uploads 16 kHz mono WAV to `{url}/audio/transcriptions` with `model=phonon-2`. Any server that implements that route works, local or on another machine, the same way the Ollama URL does.
+### Remote speech server
+
+Choose **Remote** to send audio to any OpenAI-compatible server instead, such as a `fermion serve phonon-2` running on another machine. The **Test** button pings the server's `/models` route. Freeflow uploads 16 kHz mono WAV to `{url}/audio/transcriptions`.
 
 Whisper stays built in as the zero-setup fallback. Switching engines in Settings takes effect immediately and is remembered.
 

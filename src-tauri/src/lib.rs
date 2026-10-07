@@ -6,6 +6,7 @@ pub mod hotkey;
 pub mod indicator;
 pub mod llm;
 pub mod output;
+pub mod phonon;
 pub mod pipeline;
 pub mod settings;
 pub mod stt;
@@ -24,7 +25,7 @@ use crate::llm::LlmProvider;
 use crate::output::{clipboard::ClipboardSink, paste::PasteSink, OutputSink};
 use crate::pipeline::Pipeline;
 use crate::settings::SttBackend;
-use crate::stt::{http::HttpStt, whisper::WhisperStt, NullStt, SttEngine};
+use crate::stt::{http::HttpStt, managed::ManagedStt, whisper::WhisperStt, NullStt, SttEngine};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -105,6 +106,23 @@ pub fn run() {
                     SttBackend::Http => {
                         tracing::info!(url = %http_url, model = %http_model, "using speech server");
                         Arc::new(HttpStt::new(http_url, http_model)) as Arc<dyn SttEngine>
+                    }
+                    SttBackend::Phonon => {
+                        let rt = commands::phonon_runtime(&handle);
+                        if rt.is_installed() {
+                            // Warm the server in the background so the first
+                            // hotkey press does not wait for it.
+                            let rt2 = rt.clone();
+                            async_runtime::spawn(async move {
+                                if let Err(e) = rt2.ensure_running().await {
+                                    tracing::error!(error = ?e, "could not start Phonon-2");
+                                }
+                            });
+                            Arc::new(ManagedStt::new(rt)) as Arc<dyn SttEngine>
+                        } else {
+                            tracing::warn!("Phonon-2 selected but not set up");
+                            Arc::new(NullStt) as Arc<dyn SttEngine>
+                        }
                     }
                     SttBackend::Whisper => match whisper_path {
                         Some(p) if p.exists() => match WhisperStt::load(p.clone()) {
@@ -231,9 +249,19 @@ pub fn run() {
             commands::list_input_devices,
             commands::set_stt_backend,
             commands::test_stt_server,
+            commands::phonon_status,
+            commands::phonon_install,
+            commands::phonon_uninstall,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Some(rt) = phonon::Runtime::global() {
+                    rt.stop();
+                }
+            }
+        });
 }
 
 /// Resolve `<local_app_data>/com.freeflow.app/crash.log` on every platform,

@@ -1,4 +1,5 @@
 pub mod http;
+pub mod managed;
 pub mod whisper;
 
 use async_trait::async_trait;

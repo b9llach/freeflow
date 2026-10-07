@@ -61,6 +61,8 @@ impl Default for Theme {
 pub enum SttBackend {
     Whisper,
     Http,
+    /// Phonon-2 run by Freeflow itself (private Python env, hidden server).
+    Phonon,
 }
 
 impl Default for SttBackend {
@@ -79,6 +81,7 @@ where
     let raw = serde_json::Value::deserialize(d)?;
     Ok(match raw.as_str() {
         Some("http") => SttBackend::Http,
+        Some("phonon") => SttBackend::Phonon,
         _ => SttBackend::Whisper,
     })
 }

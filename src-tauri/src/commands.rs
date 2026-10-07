@@ -12,6 +12,7 @@ use crate::llm::{LlmProvider, ModelInfo};
 use crate::pipeline::Pipeline;
 use crate::settings::{self, Settings, SttBackend};
 use crate::stt::http::HttpStt;
+use crate::stt::managed::ManagedStt;
 use crate::stt::whisper::WhisperStt;
 use crate::stt::{NullStt, SttEngine};
 
@@ -95,6 +96,20 @@ pub async fn set_stt_backend(
         SttBackend::Http => {
             pipeline.set_stt(Arc::new(HttpStt::new(http_url, http_model)));
         }
+        SttBackend::Phonon => {
+            let rt = phonon_runtime(&app);
+            if rt.is_installed() {
+                let rt2 = rt.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = rt2.ensure_running().await {
+                        tracing::error!(error = ?e, "could not start Phonon-2");
+                    }
+                });
+                pipeline.set_stt(Arc::new(ManagedStt::new(rt)));
+            } else {
+                pipeline.set_stt(Arc::new(NullStt));
+            }
+        }
         SttBackend::Whisper => {
             tokio::task::spawn_blocking(move || -> Result<()> {
                 match whisper_path {
@@ -115,6 +130,62 @@ pub async fn set_stt_backend(
     {
         let mut s = state.pipeline.settings.lock();
         s.stt_backend = backend;
+        settings::save(&app, &s)?;
+    }
+    Ok(())
+}
+
+/// The managed Phonon-2 runtime, rooted in the app data folder.
+pub fn phonon_runtime(app: &AppHandle) -> Arc<crate::phonon::Runtime> {
+    // Local (non-roaming) app data: this is 1+ GB of machine-specific files,
+    // and Roaming paths can contain redirected or cloud-synced reparse points
+    // that uv refuses to build its Python links through (os error 448).
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("phonon");
+    crate::phonon::Runtime::init(base, crate::phonon::DEFAULT_PORT)
+}
+
+#[tauri::command]
+pub async fn phonon_status(app: AppHandle) -> Result<crate::phonon::Status> {
+    Ok(phonon_runtime(&app).status().await)
+}
+
+/// Install (or finish installing) Phonon-2, start it, make it the active
+/// engine. Progress is streamed on `freeflow://phonon-setup`.
+#[tauri::command]
+pub async fn phonon_install(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+    let rt = phonon_runtime(&app);
+    let emitter = app.clone();
+    let progress: crate::phonon::ProgressFn = Arc::new(move |p| {
+        let _ = emitter.emit("freeflow://phonon-setup", p);
+    });
+    rt.install(progress).await.map_err(|e| format!("{e:#}"))?;
+
+    state.pipeline.set_stt(Arc::new(ManagedStt::new(rt)));
+    let mut s = state.pipeline.settings.lock();
+    s.stt_backend = SttBackend::Phonon;
+    settings::save(&app, &s)?;
+    Ok(())
+}
+
+/// Remove the private Python environment, model cache and server. Falls back
+/// to Whisper (or the placeholder) so the app never points at a missing engine.
+#[tauri::command]
+pub async fn phonon_uninstall(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+    let was_active = state.pipeline.settings.lock().stt_backend == SttBackend::Phonon;
+    if was_active {
+        state.pipeline.set_stt(Arc::new(NullStt));
+    }
+    phonon_runtime(&app)
+        .uninstall()
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    if was_active {
+        let mut s = state.pipeline.settings.lock();
+        s.stt_backend = SttBackend::Whisper;
         settings::save(&app, &s)?;
     }
     Ok(())

@@ -3,7 +3,22 @@ import { invoke } from "@tauri-apps/api/core";
 export type HotkeyMode = "pushtotalk" | "toggle";
 export type Theme = "light" | "dark";
 export type PipelineStatus = "idle" | "recording" | "thinking" | "pasted";
-export type SttBackend = "whisper" | "http";
+export type SttBackend = "whisper" | "http" | "phonon";
+
+export interface PhononStatus {
+  supported: boolean;
+  installed: boolean;
+  running: boolean;
+  port: number;
+  log_path: string;
+}
+
+export interface PhononProgress {
+  stage: "uv" | "python" | "packages" | "server" | "done";
+  message: string;
+  detail: string | null;
+  percent: number | null;
+}
 
 export interface Settings {
   ollama_base_url: string;
@@ -85,6 +100,9 @@ export const api = {
   setSttBackend: (backend: SttBackend) =>
     invoke<void>("set_stt_backend", { backend }),
   testSttServer: (url: string) => invoke<string>("test_stt_server", { url }),
+  phononStatus: () => invoke<PhononStatus>("phonon_status"),
+  phononInstall: () => invoke<void>("phonon_install"),
+  phononUninstall: () => invoke<void>("phonon_uninstall"),
 };
 
 export const WHISPER_MODEL_OPTIONS: {

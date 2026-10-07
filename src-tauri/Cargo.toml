@@ -41,6 +41,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 uuid = { version = "1", features = ["v4", "serde"] }
 futures-util = "0.3"
+sha2 = "0.10"
 
 # Audio capture
 cpal = "0.15"
@@ -65,6 +66,9 @@ windows = { version = "0.58", features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Kernel",
     "Win32_System_SystemInformation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_Security",
 ] }
 
 [features]
