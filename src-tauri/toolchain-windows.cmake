@@ -1,32 +1,20 @@
 # CMake toolchain file used for every cmake-driven sys crate cargo builds
 # (whisper-rs-sys is the important one — it compiles whisper.cpp / ggml).
 #
-# Two goals:
+# Goal: cap the SIMD instruction set at AVX2.
 #
-# 1. Cap the SIMD instruction set at AVX2.
-#
-#    whisper.cpp / ggml default to GGML_NATIVE=ON, which means "compile for
-#    the build host's CPU." On a dev machine with AVX-512 support that bakes
-#    AVX-512 instructions into the resulting binary — which then throws
-#    EXCEPTION_ILLEGAL_INSTRUCTION the moment it runs on any user machine
-#    without AVX-512. We force NATIVE off and pin /arch:AVX2 so the shipped
-#    binary works on the AVX2 baseline (basically any Intel Haswell / AMD
-#    Excavator or newer, i.e. anything sold since ~2013).
-#
-# 2. Static MSVC C++ runtime.
-#
-#    Belts and suspenders alongside the +crt-static rustflag: cmake targets
-#    also link the static MultiThreaded CRT so whisper.cpp's static libs
-#    are ABI-compatible with the rest of the exe.
+# whisper.cpp / ggml default to GGML_NATIVE=ON, which means "compile for
+# the build host's CPU." On a dev machine with AVX-512 support that bakes
+# AVX-512 instructions into the resulting binary, which then throws
+# EXCEPTION_ILLEGAL_INSTRUCTION the moment it runs on any user machine
+# without AVX-512. We force NATIVE off and pin /arch:AVX2 so the shipped
+# binary works on the AVX2 baseline (any Intel Haswell / AMD Excavator or
+# newer, i.e. anything sold since about 2013).
 #
 # Referenced from .cargo/config.toml via
 #   CMAKE_TOOLCHAIN_FILE = { value = "toolchain-windows.cmake", relative = true }
 
 if(CMAKE_HOST_WIN32)
-    # Static release CRT (matches Rust's +crt-static). Cache + FORCE so
-    # whisper.cpp's own CMakeLists can't overwrite it.
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded" CACHE STRING "" FORCE)
-
     # Cap MSVC codegen at AVX2. /arch:AVX2 implies AVX + FMA + F16C + BMI1/2
     # for MSVC and disables AVX-512. INIT variants apply BEFORE the project's
     # own CFLAGS/CXXFLAGS so we don't need to fight per-project overrides.

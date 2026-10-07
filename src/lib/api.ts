@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type HotkeyMode = "pushtotalk" | "toggle";
 export type Theme = "light" | "dark";
 export type PipelineStatus = "idle" | "recording" | "thinking" | "pasted";
-export type SttBackend = "whisper" | "parakeet";
+export type SttBackend = "whisper" | "http";
 
 export interface Settings {
   ollama_base_url: string;
@@ -20,7 +20,8 @@ export interface Settings {
   vocabulary: string[];
   theme: Theme;
   stt_backend: SttBackend;
-  parakeet_model_dir: string | null;
+  stt_http_url: string;
+  stt_http_model: string;
   input_device: string | null;
 }
 
@@ -77,13 +78,13 @@ export const api = {
   pickWhisperModel: (path: string) => invoke<void>("pick_whisper_model", { path }),
   downloadWhisperModel: (model: WhisperModelKind) =>
     invoke<string>("download_whisper_model", { model }),
-  downloadParakeetModel: () => invoke<string>("download_parakeet_model"),
-  setSttBackend: (backend: SttBackend) =>
-    invoke<void>("set_stt_backend", { backend }),
   getPlatform: () => invoke<string>("get_platform"),
   listDownloadedWhisperModels: () =>
     invoke<string[]>("list_downloaded_whisper_models"),
   listInputDevices: () => invoke<InputDeviceInfo[]>("list_input_devices"),
+  setSttBackend: (backend: SttBackend) =>
+    invoke<void>("set_stt_backend", { backend }),
+  testSttServer: (url: string) => invoke<string>("test_stt_server", { url }),
 };
 
 export const WHISPER_MODEL_OPTIONS: {

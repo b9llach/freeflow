@@ -7,6 +7,7 @@ A Tauri 2 desktop dictation tool. Hold a single hotkey, speak, release — Whisp
 ## Features
 
 - **Local Whisper STT** via `whisper-rs` / `whisper.cpp` — no cloud, no API keys
+- **Optional Phonon-2 speech server** — point Freeflow at any OpenAI-compatible `/audio/transcriptions` endpoint (such as `fermion serve phonon-2`), local or on another machine
 - **LLM cleanup through Ollama** using the OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints — point it at localhost or any remote box
 - **User vocabulary / facts** that get injected into the cleanup prompt so proper nouns and product names always come out spelled right
 - **Single-key push-to-talk or toggle mode** with left/right modifier distinction — bind right Ctrl only and left Ctrl won't fire it
@@ -71,24 +72,30 @@ Models come from https://huggingface.co/ggerganov/whisper.cpp — the same files
 
 Downloaded models land in `%APPDATA%/com.freeflow.app/models/ggml-*.bin`. You can also point at an existing `ggml-*.bin` from another whisper.cpp install via the Browse button.
 
-## Parakeet (optional STT backend)
-
-Freeflow also supports NVIDIA's **Parakeet TDT 0.6B v3** via `sherpa-onnx`. It's a multilingual (25 languages) Token-and-Duration Transducer that generally beats Whisper on English WER and is significantly faster on CPU inference.
-
-Switch backends under Settings → Speech to text. On first switch to Parakeet, click Download and Freeflow fetches four files from `csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` on Hugging Face:
-
-| File | Size |
-| --- | --- |
-| `encoder.int8.onnx` | ~652 MB |
-| `decoder.int8.onnx` | ~11.8 MB |
-| `joiner.int8.onnx` | ~6.4 MB |
-| `tokens.txt` | ~94 kB |
-
-They land in `%APPDATA%/com.freeflow.app/models/parakeet-tdt-0.6b-v3-int8/` (Windows) or `~/Library/Application Support/com.freeflow.app/models/parakeet-tdt-0.6b-v3-int8/` (macOS). Whisper and Parakeet configs live side by side, so switching between them at runtime is instant once both are downloaded.
-
-The Rust binding is `sherpa-rs`, which pulls the `sherpa-onnx` C++ library. Prebuilt binaries are downloaded at build time on Windows and macOS. Linux may require a system install of `sherpa-onnx`.
-
 On startup, Freeflow loads the model on a background thread and then runs a short silent transcription to force the weights into RAM and warm the internal caches — so the first real hotkey press doesn't pay the mmap page-in cost.
+
+## Phonon-2 speech server (optional engine)
+
+Freeflow can send audio to an OpenAI-compatible speech server instead of running Whisper inside the app. It is set up for [Phonon-2](https://huggingface.co/FermionResearch/Phonon-2), a 2-bit quantized derivative of NVIDIA Parakeet TDT 0.6B v3 (about 164 MB).
+
+Phonon-2 is a speech-to-text model, so it replaces Whisper, not the Ollama cleanup step. Its engine is Python (MLX on Apple silicon, PyTorch on Windows and Linux CPU), so it runs as its own process rather than inside the Freeflow binary:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install fermion-research
+# Apple silicon:
+pip install mlx mlx-audio mlx-lm soundfile scipy zstandard
+# Windows / Linux CPU:
+pip install torch safetensors soundfile scipy zstandard
+fermion serve phonon-2
+```
+
+CPU and CUDA Docker images are also published; see the model card. The server listens on `http://127.0.0.1:8000/v1` by default.
+
+Then in Settings, Speech to text, set **Engine** to **Phonon-2 server**. The URL field defaults to `http://127.0.0.1:8000/v1`, and the **Test** button pings the server's `/models` route so a stopped server is obvious before your first dictation. Freeflow uploads 16 kHz mono WAV to `{url}/audio/transcriptions` with `model=phonon-2`. Any server that implements that route works, local or on another machine, the same way the Ollama URL does.
+
+Whisper stays built in as the zero-setup fallback. Switching engines in Settings takes effect immediately and is remembered.
 
 ## Paste reliability
 

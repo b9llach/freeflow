@@ -1,14 +1,12 @@
-// Copies the native runtime DLLs that sherpa-rs's `download-binaries`
-// feature drops in target/release/ (Windows only) into a stable staging
-// directory that tauri.conf.json's `bundle.resources` map points at.
+// Stages the Visual C++ runtime DLLs into src-tauri/runtime-dlls/ so that
+// tauri.conf.json's `bundle.resources` map can ship them next to
+// freeflow2.exe.
 //
-// This runs as `beforeBundleCommand`, so cargo has already produced the
-// DLLs by the time we get here, and tauri's bundler will package the
-// staging directory into the installer immediately after.
+// freeflow2.exe imports msvcp140.dll (whisper.cpp's C++ standard library
+// usage). Bundling the runtime removes the "install the VC++ Redistributable
+// first" prerequisite on clean Windows machines.
 //
-// No-op on non-Windows: sherpa-rs uses libsherpa-onnx.dylib / .so and the
-// dynamic loader finds them via rpath / DYLD_LIBRARY_PATH conventions on
-// those platforms.
+// Runs as `beforeBundleCommand`. No-op on non-Windows.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -17,22 +15,6 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-// Native DLLs that sherpa-rs's download-binaries feature drops in
-// target/release/ (Parakeet backend + ONNX Runtime).
-const SHERPA_FILES = [
-  "sherpa-onnx-c-api.dll",
-  "sherpa-onnx-cxx-api.dll",
-  "onnxruntime.dll",
-  "onnxruntime_providers_shared.dll",
-  "cargs.dll",
-];
-
-// Visual C++ 2015-2022 Redistributable runtime DLLs. These are imports of
-// freeflow2.exe (via whisper.cpp's C++ stdlib usage) and of onnxruntime.dll.
-// Even with `+crt-static` on Rust, the C++ standard library (msvcp140) still
-// links dynamically, and onnxruntime is a prebuilt DLL we don't control at
-// all. Bundling these next to the exe removes the "install VC++ Redist
-// first" prerequisite for end users.
 const VC_RUNTIME_FILES = [
   "msvcp140.dll",
   "vcruntime140.dll",
@@ -40,89 +22,63 @@ const VC_RUNTIME_FILES = [
 ];
 
 const root = path.resolve(__dirname, "..");
-const cargoOut = path.join(root, "src-tauri", "target", "release");
 const dstDir = path.join(root, "src-tauri", "runtime-dlls");
-
-if (!fs.existsSync(cargoOut)) {
-  console.error(
-    `[copy-runtime-dlls] cargo release output not found at ${cargoOut}. ` +
-      `Did the cargo build step run yet?`
-  );
-  process.exit(1);
-}
-
 fs.mkdirSync(dstDir, { recursive: true });
 
-let missing = 0;
-
-function copy(name, src) {
-  const dst = path.join(dstDir, name);
-  if (!fs.existsSync(src)) {
-    console.warn(`[copy-runtime-dlls] MISSING: ${src}`);
-    missing++;
-    return;
-  }
-  fs.copyFileSync(src, dst);
-  const size = fs.statSync(dst).size;
-  console.log(
-    `[copy-runtime-dlls] ${name.padEnd(36)} ${(size / 1024 / 1024).toFixed(2)} MB`
-  );
-}
-
-// 1. Sherpa / ONNX runtime DLLs from cargo output.
-for (const name of SHERPA_FILES) {
-  copy(name, path.join(cargoOut, name));
-}
-
-// 2. VC++ Redistributable runtime DLLs. Prefer the VS-shipped redistributable
-// tree (its versions match the compiler that built onnxruntime and our exe);
-// fall back to System32 which every Windows dev box has.
+// Prefer the VS-shipped redistributable tree (versions match the compiler
+// that built the exe); fall back to System32, which every Windows box has.
 function findVcRedistDir() {
-  const candidates = [];
   const vsRoots = [
     process.env["ProgramFiles"] &&
       path.join(process.env["ProgramFiles"], "Microsoft Visual Studio"),
     process.env["ProgramFiles(x86)"] &&
       path.join(process.env["ProgramFiles(x86)"], "Microsoft Visual Studio"),
   ].filter(Boolean);
+
   for (const vsRoot of vsRoots) {
     if (!fs.existsSync(vsRoot)) continue;
     for (const year of fs.readdirSync(vsRoot).sort().reverse()) {
-      // 2022, 2019, ...
       for (const edition of ["BuildTools", "Community", "Professional", "Enterprise", "Preview"]) {
-        const redist = path.join(
-          vsRoot, year, edition, "VC", "Redist", "MSVC"
-        );
-        if (fs.existsSync(redist)) {
-          const versions = fs.readdirSync(redist).sort().reverse();
-          for (const v of versions) {
-            const crtDir = path.join(redist, v, "x64", "Microsoft.VC143.CRT");
-            if (fs.existsSync(crtDir)) candidates.push(crtDir);
-            const crtDir142 = path.join(redist, v, "x64", "Microsoft.VC142.CRT");
-            if (fs.existsSync(crtDir142)) candidates.push(crtDir142);
+        const redist = path.join(vsRoot, year, edition, "VC", "Redist", "MSVC");
+        if (!fs.existsSync(redist)) continue;
+        for (const v of fs.readdirSync(redist).sort().reverse()) {
+          for (const crt of ["Microsoft.VC143.CRT", "Microsoft.VC142.CRT"]) {
+            const dir = path.join(redist, v, "x64", crt);
+            if (fs.existsSync(dir)) return dir;
           }
         }
       }
     }
   }
-  return candidates[0];
+  return undefined;
 }
 
 const vcRedistDir = findVcRedistDir();
 const system32 = path.join(process.env["WINDIR"] || "C:\\Windows", "System32");
 
+let missing = 0;
 for (const name of VC_RUNTIME_FILES) {
   let src = vcRedistDir && path.join(vcRedistDir, name);
   if (!src || !fs.existsSync(src)) {
     src = path.join(system32, name);
   }
-  copy(name, src);
+  if (!fs.existsSync(src)) {
+    console.warn(`[copy-runtime-dlls] MISSING: ${name}`);
+    missing++;
+    continue;
+  }
+  const dst = path.join(dstDir, name);
+  fs.copyFileSync(src, dst);
+  const size = fs.statSync(dst).size;
+  console.log(
+    `[copy-runtime-dlls] ${name.padEnd(24)} ${(size / 1024 / 1024).toFixed(2)} MB`
+  );
 }
 
 if (missing > 0) {
   console.error(
     `[copy-runtime-dlls] ${missing} runtime DLL(s) missing. The installed ` +
-      `app will fail to start on any machine without them on PATH.`
+      `app will fail to start on machines without the VC++ Redistributable.`
   );
   process.exit(1);
 }

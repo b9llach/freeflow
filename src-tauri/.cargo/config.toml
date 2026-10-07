@@ -1,35 +1,21 @@
-# Statically link the MSVC C runtime on Windows so freeflow2.exe doesn't
-# depend on vcruntime140.dll / msvcp140.dll being installed on the target
-# machine. Without this, users without a matching Visual C++ Redistributable
-# see the process crash the moment it hits heavy C++ code paths (e.g.
-# whisper.cpp's inference loop during model warmup).
+# Build configuration for the native (cmake-driven) dependencies.
 #
-# CFLAGS/CXXFLAGS force any C/C++ code that dependency `cc` crates build
-# (whisper-rs-sys is the main one — it compiles whisper.cpp) to also link
-# the static runtime, so the runtime library ABI matches everywhere.
-
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
-
-[target.i686-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
-
-[target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+# The C runtime is deliberately left at the default dynamic CRT for both Rust
+# and the C++ code. An earlier attempt to force the static CRT left the Rust
+# side static while whisper.cpp's objects stayed dynamic (CMake ignores
+# CMAKE_MSVC_RUNTIME_LIBRARY under whisper.cpp's old minimum-version policy),
+# which broke linking of debug builds. The Visual C++ runtime DLLs the dynamic
+# CRT needs are bundled next to freeflow2.exe by scripts/copy-runtime-dlls.cjs,
+# so end users do not need the Redistributable installed.
 
 [env]
 # Point every cmake-driven sys crate (whisper-rs-sys, primarily) at our
 # toolchain file. It caps whisper.cpp codegen at AVX2 so the shipped exe
-# doesn't require AVX-512 that the dev machine has but user machines
-# usually don't (EXCEPTION_ILLEGAL_INSTRUCTION at model load). It also
-# forces the static MSVC C++ runtime so the resulting .lib archives are
-# ABI-compatible with the rest of the exe (which uses static CRT via the
-# +crt-static rustflag above).
+# does not require AVX-512, which the dev machine has but many user machines
+# do not (EXCEPTION_ILLEGAL_INSTRUCTION at model load).
 CMAKE_TOOLCHAIN_FILE = { value = "toolchain-windows.cmake", relative = true }
-# Pin the cmake generator. cmake-rs's auto-detect tries to name the
-# newest VS toolchain it finds on the machine, but if that VS release
-# postdates the local cmake install (e.g. VS 18 / 2026 on cmake 3.29)
-# cmake refuses the generator string and the build fails. VS 17 (2022)
-# is what stable Rust MSVC targets ship for and it's on every dev box
-# with recent Build Tools.
+# Pin the cmake generator. cmake-rs auto-detects the newest Visual Studio it
+# finds, but if that release postdates the local cmake install (for example
+# VS 18 / 2026 on cmake 3.29) cmake refuses the generator string and the
+# build fails. VS 17 (2022) works everywhere.
 CMAKE_GENERATOR = "Visual Studio 17 2022"

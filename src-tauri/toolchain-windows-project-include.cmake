@@ -32,9 +32,8 @@ set(GGML_AMX_BF16     OFF CACHE BOOL "" FORCE)
 set(WHISPER_NATIVE    OFF CACHE BOOL "" FORCE)
 set(WHISPER_AVX512    OFF CACHE BOOL "" FORCE)
 
-# --- MSVC runtime + arch cap (redundant with toolchain but sticky) ----
+# --- arch cap (redundant with toolchain but sticky) -------------------
 if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded" CACHE STRING "" FORCE)
     # add_compile_options adds these AFTER CMAKE_C_FLAGS is fully set, so
     # neither cmake-rs's -DCMAKE_C_FLAGS= nor whisper.cpp's own ARCH_FLAGS
     # can strip them. /arch:AVX2 caps MSVC codegen — no AVX-512 through

@@ -116,13 +116,13 @@ impl Pipeline {
             return Ok(None);
         }
 
-        // Bail out early if the Whisper model hasn't finished background-loading.
-        // Otherwise transcribe() errors and leaves the UI stuck on Thinking.
+        // Bail out early if no speech engine is available, otherwise
+        // transcribe() errors and leaves the UI stuck on Thinking.
         let stt = self.stt_arc();
         if stt.name() == "null" {
             let _ = self.app.emit(
                 "freeflow://toast",
-                "Whisper model is still loading, try again in a moment",
+                "No speech engine is ready. Pick a Whisper model or set a speech server in Settings",
             );
             self.finish_idle();
             return Ok(None);

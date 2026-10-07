@@ -10,10 +10,10 @@ use crate::hotkey::{key_to_name, parse_key, HotkeyState};
 use crate::llm::ollama::Ollama;
 use crate::llm::{LlmProvider, ModelInfo};
 use crate::pipeline::Pipeline;
-use crate::settings::{self, Settings};
-use crate::stt::parakeet::ParakeetStt;
+use crate::settings::{self, Settings, SttBackend};
+use crate::stt::http::HttpStt;
 use crate::stt::whisper::WhisperStt;
-use crate::stt::SttEngine;
+use crate::stt::{NullStt, SttEngine};
 
 pub struct AppState {
     pub pipeline: Arc<Pipeline>,
@@ -31,7 +31,15 @@ pub fn save_settings(
     state: State<'_, AppState>,
     new_settings: Settings,
 ) -> Result<()> {
-    let prev_url = state.pipeline.settings.lock().ollama_base_url.clone();
+    let (prev_url, prev_backend, prev_stt_url, prev_stt_model) = {
+        let s = state.pipeline.settings.lock();
+        (
+            s.ollama_base_url.clone(),
+            s.stt_backend,
+            s.stt_http_url.clone(),
+            s.stt_http_model.clone(),
+        )
+    };
 
     if let Some(k) = parse_key(&new_settings.hotkey) {
         state.hotkey_state.set_key(k);
@@ -44,9 +52,78 @@ pub fn save_settings(
         state.pipeline.set_llm(new_llm);
     }
 
+    // While the HTTP engine is active, edits to its URL or model take effect
+    // immediately. Switching between engines goes through set_stt_backend.
+    if new_settings.stt_backend == SttBackend::Http
+        && prev_backend == SttBackend::Http
+        && (prev_stt_url != new_settings.stt_http_url
+            || prev_stt_model != new_settings.stt_http_model)
+    {
+        state.pipeline.set_stt(Arc::new(HttpStt::new(
+            new_settings.stt_http_url.clone(),
+            new_settings.stt_http_model.clone(),
+        )));
+    }
+
     *state.pipeline.settings.lock() = new_settings.clone();
     settings::save(&app, &new_settings)?;
     Ok(())
+}
+
+/// Switch the active speech engine and persist the choice. Whisper needs the
+/// model loaded from disk (done off the async runtime); the HTTP engine is
+/// just a client so it swaps in instantly. With Whisper selected but no
+/// model on disk the pipeline gets a placeholder that tells the user what to
+/// configure, instead of silently keeping the previous engine.
+#[tauri::command]
+pub async fn set_stt_backend(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    backend: SttBackend,
+) -> Result<()> {
+    let pipeline = state.pipeline.clone();
+    let (whisper_path, http_url, http_model) = {
+        let s = state.pipeline.settings.lock();
+        (
+            s.whisper_model_path.clone(),
+            s.stt_http_url.clone(),
+            s.stt_http_model.clone(),
+        )
+    };
+
+    match backend {
+        SttBackend::Http => {
+            pipeline.set_stt(Arc::new(HttpStt::new(http_url, http_model)));
+        }
+        SttBackend::Whisper => {
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                match whisper_path {
+                    Some(p) if p.exists() => {
+                        let stt = WhisperStt::load(p).map_err(|e| e.to_string())?;
+                        stt.warmup_blocking();
+                        pipeline.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
+                    }
+                    _ => pipeline.set_stt(Arc::new(NullStt)),
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+        }
+    }
+
+    {
+        let mut s = state.pipeline.settings.lock();
+        s.stt_backend = backend;
+        settings::save(&app, &s)?;
+    }
+    Ok(())
+}
+
+/// Ping the speech server's `/models` route. Returns the served model id.
+#[tauri::command]
+pub async fn test_stt_server(url: String) -> Result<String> {
+    crate::stt::http::probe(&url).await.map_err(Into::into)
 }
 
 #[tauri::command]
@@ -375,104 +452,3 @@ fn panic_msg(panic: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
-// ─── Parakeet ────────────────────────────────────────────────────────────
-
-const PARAKEET_HF_REPO: &str = "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
-const PARAKEET_FILES: &[&str] = &[
-    "encoder.int8.onnx",
-    "decoder.int8.onnx",
-    "joiner.int8.onnx",
-    "tokens.txt",
-];
-
-#[tauri::command]
-pub async fn download_parakeet_model(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<String> {
-    let model_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("models")
-        .join("parakeet-tdt-0.6b-v3-int8");
-    std::fs::create_dir_all(&model_dir)?;
-
-    for file in PARAKEET_FILES {
-        let target = model_dir.join(file);
-        if target.exists() {
-            continue;
-        }
-        let url = format!(
-            "https://huggingface.co/{PARAKEET_HF_REPO}/resolve/main/{file}?download=true"
-        );
-        stream_download(&app, &url, &target, file).await?;
-    }
-
-    let pipeline = state.pipeline.clone();
-    let dir_clone = model_dir.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let stt = ParakeetStt::load(dir_clone).map_err(|e| e.to_string())?;
-        stt.warmup_blocking();
-        pipeline.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-
-    {
-        let mut s = state.pipeline.settings.lock();
-        s.parakeet_model_dir = Some(model_dir.clone());
-        s.stt_backend = crate::settings::SttBackend::Parakeet;
-        settings::save(&app, &s)?;
-    }
-
-    Ok(model_dir.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub async fn set_stt_backend(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    backend: crate::settings::SttBackend,
-) -> Result<()> {
-    use crate::settings::SttBackend;
-
-    let pipeline = state.pipeline.clone();
-    let (whisper_path, parakeet_dir) = {
-        let s = state.pipeline.settings.lock();
-        (s.whisper_model_path.clone(), s.parakeet_model_dir.clone())
-    };
-
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        match backend {
-            SttBackend::Whisper => match whisper_path {
-                Some(p) if p.exists() => {
-                    let stt = WhisperStt::load(p).map_err(|e| e.to_string())?;
-                    stt.warmup_blocking();
-                    pipeline.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
-                    Ok(())
-                }
-                _ => Err("no whisper model configured".to_string().into()),
-            },
-            SttBackend::Parakeet => match parakeet_dir {
-                Some(d) if d.exists() => {
-                    let stt = ParakeetStt::load(d).map_err(|e| e.to_string())?;
-                    stt.warmup_blocking();
-                    pipeline.set_stt(Arc::new(stt) as Arc<dyn SttEngine>);
-                    Ok(())
-                }
-                _ => Err("no parakeet model downloaded".to_string().into()),
-            },
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-
-    {
-        let mut s = state.pipeline.settings.lock();
-        s.stt_backend = backend;
-        settings::save(&app, &s)?;
-    }
-    Ok(())
-}

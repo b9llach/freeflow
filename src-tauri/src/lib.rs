@@ -23,7 +23,8 @@ use crate::llm::ollama::Ollama;
 use crate::llm::LlmProvider;
 use crate::output::{clipboard::ClipboardSink, paste::PasteSink, OutputSink};
 use crate::pipeline::Pipeline;
-use crate::stt::{parakeet::ParakeetStt, whisper::WhisperStt, SttEngine};
+use crate::settings::SttBackend;
+use crate::stt::{http::HttpStt, whisper::WhisperStt, NullStt, SttEngine};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -91,16 +92,20 @@ pub fn run() {
             // still runs so the first hotkey press isn't paying the mmap
             // page-in cost.
             let stt: Arc<dyn SttEngine> = {
-                use crate::settings::SttBackend;
-                let (backend, whisper_path, parakeet_dir) = {
+                let (backend, whisper_path, http_url, http_model) = {
                     let s = settings.lock();
                     (
                         s.stt_backend,
                         s.whisper_model_path.clone(),
-                        s.parakeet_model_dir.clone(),
+                        s.stt_http_url.clone(),
+                        s.stt_http_model.clone(),
                     )
                 };
                 match backend {
+                    SttBackend::Http => {
+                        tracing::info!(url = %http_url, model = %http_model, "using speech server");
+                        Arc::new(HttpStt::new(http_url, http_model)) as Arc<dyn SttEngine>
+                    }
                     SttBackend::Whisper => match whisper_path {
                         Some(p) if p.exists() => match WhisperStt::load(p.clone()) {
                             Ok(stt) => {
@@ -116,24 +121,6 @@ pub fn run() {
                         },
                         _ => {
                             tracing::warn!("whisper model not configured; transcription will fail until set in settings");
-                            Arc::new(NullStt) as Arc<dyn SttEngine>
-                        }
-                    },
-                    SttBackend::Parakeet => match parakeet_dir {
-                        Some(d) if d.exists() => match ParakeetStt::load(d.clone()) {
-                            Ok(stt) => {
-                                tracing::info!("parakeet model loaded, warming up");
-                                stt.warmup_blocking();
-                                tracing::info!("parakeet warmup complete");
-                                Arc::new(stt) as Arc<dyn SttEngine>
-                            }
-                            Err(e) => {
-                                tracing::error!(error = ?e, "failed to load parakeet model");
-                                Arc::new(NullStt) as Arc<dyn SttEngine>
-                            }
-                        },
-                        _ => {
-                            tracing::warn!("parakeet model not downloaded; transcription will fail until set in settings");
                             Arc::new(NullStt) as Arc<dyn SttEngine>
                         }
                     },
@@ -239,11 +226,11 @@ pub fn run() {
             commands::set_hotkey_enabled,
             commands::pick_whisper_model,
             commands::download_whisper_model,
-            commands::download_parakeet_model,
-            commands::set_stt_backend,
             commands::get_platform,
             commands::list_downloaded_whisper_models,
             commands::list_input_devices,
+            commands::set_stt_backend,
+            commands::test_stt_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -339,7 +326,7 @@ fn write_startup_diagnostics() {
 /// and writes the exception code + faulting address to crash.log before
 /// letting Windows terminate the process the usual way.
 ///
-/// This is the diagnostic we need when whisper.cpp / onnxruntime dereference
+/// This is the diagnostic we need when whisper.cpp dereferences
 /// a bad pointer or execute an instruction the CPU doesn't support: neither
 /// of those trips Rust's panic hook, so without this the crash is silent.
 #[cfg(windows)]
@@ -360,7 +347,7 @@ unsafe extern "system" fn windows_seh_handler(
     let addr = (*record).ExceptionAddress as usize;
 
     // Names of the exception codes we're most likely to see out of
-    // whisper.cpp / onnxruntime / sherpa-onnx.
+    // whisper.cpp.
     let name = match code {
         0xC000_0005 => "EXCEPTION_ACCESS_VIOLATION",
         0xC000_001D => "EXCEPTION_ILLEGAL_INSTRUCTION",
@@ -468,19 +455,3 @@ fn show_main(app: &tauri::AppHandle) {
     });
 }
 
-struct NullStt;
-
-#[async_trait::async_trait]
-impl SttEngine for NullStt {
-    async fn transcribe(
-        &self,
-        _samples: &[f32],
-        _sample_rate: u32,
-        _lang: &str,
-    ) -> anyhow::Result<String> {
-        anyhow::bail!("whisper model not configured — set whisper_model_path in settings")
-    }
-    fn name(&self) -> &str {
-        "null"
-    }
-}

@@ -37,9 +37,12 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [downloadErr, setDownloadErr] = useState<string | null>(null);
 
-  const [parakeetDownloading, setParakeetDownloading] = useState(false);
-  const [parakeetErr, setParakeetErr] = useState<string | null>(null);
+  const [switchingBackend, setSwitchingBackend] = useState(false);
   const [backendErr, setBackendErr] = useState<string | null>(null);
+  const [testingServer, setTestingServer] = useState(false);
+  const [serverTest, setServerTest] = useState<{ ok: boolean; msg: string } | null>(
+    null
+  );
 
   // Filenames of Whisper models already sitting in the app models dir.
   const [downloadedWhisper, setDownloadedWhisper] = useState<string[]>([]);
@@ -177,43 +180,33 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
     }
   };
 
-  const handleParakeetDownload = async () => {
-    setParakeetDownloading(true);
-    setParakeetErr(null);
-    setProgress(null);
+  const handleBackendChange = async (backend: SttBackend) => {
+    if (backend === settings.stt_backend) return;
+    setBackendErr(null);
+    setSwitchingBackend(true);
     try {
-      const dir = await api.downloadParakeetModel();
-      onChange({
-        ...settings,
-        parakeet_model_dir: dir,
-        stt_backend: "parakeet",
-      });
+      // The backend persists the choice and swaps the live engine. Local
+      // state only follows once that succeeded, so the UI never claims an
+      // engine that failed to load.
+      await api.setSttBackend(backend);
+      onChange({ ...settings, stt_backend: backend });
     } catch (e) {
-      setParakeetErr(String(e));
+      setBackendErr(String(e));
     } finally {
-      setParakeetDownloading(false);
-      setTimeout(() => setProgress(null), 1800);
+      setSwitchingBackend(false);
     }
   };
 
-  const handleBackendChange = async (backend: SttBackend) => {
-    setBackendErr(null);
-    // Always flip the UI so the Parakeet download panel becomes reachable
-    // even before a model is present. The engine swap only fires when a
-    // model is actually configured for the target backend — otherwise we
-    // save the preference and wait for the download flow to load it.
-    onChange({ ...settings, stt_backend: backend });
-
-    const hasModel =
-      backend === "whisper"
-        ? !!settings.whisper_model_path
-        : !!settings.parakeet_model_dir;
-    if (!hasModel) return;
-
+  const handleTestServer = async () => {
+    setTestingServer(true);
+    setServerTest(null);
     try {
-      await api.setSttBackend(backend);
+      const id = await api.testSttServer(settings.stt_http_url);
+      setServerTest({ ok: true, msg: `Connected. Serving ${id}` });
     } catch (e) {
-      setBackendErr(String(e));
+      setServerTest({ ok: false, msg: String(e) });
+    } finally {
+      setTestingServer(false);
     }
   };
 
@@ -378,20 +371,22 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
             <button
               className={settings.stt_backend === "whisper" ? "active" : ""}
               onClick={() => handleBackendChange("whisper")}
+              disabled={switchingBackend}
             >
               Whisper
             </button>
             <button
-              className={settings.stt_backend === "parakeet" ? "active" : ""}
-              onClick={() => handleBackendChange("parakeet")}
+              className={settings.stt_backend === "http" ? "active" : ""}
+              onClick={() => handleBackendChange("http")}
+              disabled={switchingBackend}
             >
-              Parakeet
+              Phonon-2 server
             </button>
           </div>
           {backendErr && <div className="field-error">{backendErr}</div>}
           <div className="field-hint">
-            Whisper runs locally via whisper.cpp. Parakeet is NVIDIA's TDT
-            0.6B v3 multilingual model via sherpa-onnx.
+            Whisper runs inside the app. Phonon-2 runs in a separate speech
+            server that Freeflow talks to over HTTP.
           </div>
         </div>
 
@@ -478,55 +473,44 @@ export function SettingsPanel({ settings, onChange, onClearHistory }: Props) {
           </>
         )}
 
-        {settings.stt_backend === "parakeet" && (
+        {settings.stt_backend === "http" && (
           <>
             <div className="field">
-              <label>Model directory</label>
-              <input
-                type="text"
-                value={settings.parakeet_model_dir ?? ""}
-                readOnly
-                placeholder="not downloaded yet"
-              />
-              <div className="field-hint">
-                NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX from{" "}
-                <code>csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8</code>).
-                ~670 MB total across four files.
+              <label>Server URL</label>
+              <div className="row">
+                <input
+                  type="text"
+                  value={settings.stt_http_url}
+                  onChange={(e) => update("stt_http_url", e.target.value)}
+                  placeholder="http://127.0.0.1:8000/v1"
+                />
+                <button
+                  className="btn small fit"
+                  onClick={handleTestServer}
+                  disabled={testingServer}
+                >
+                  {testingServer ? "..." : "Test"}
+                </button>
               </div>
+              {serverTest && (
+                <div className={serverTest.ok ? "field-hint" : "field-error"}>
+                  {serverTest.msg}
+                </div>
+              )}
             </div>
             <div className="field">
-              <button
-                className="btn primary"
-                onClick={handleParakeetDownload}
-                disabled={parakeetDownloading}
-              >
-                {parakeetDownloading
-                  ? "Downloading..."
-                  : settings.parakeet_model_dir
-                    ? "Re-download / repair"
-                    : "Download model"}
-              </button>
-              {progress && (
-                <>
-                  <div className="progress">
-                    <div
-                      className="progress-bar"
-                      style={{
-                        width: progress.total
-                          ? `${Math.min(100, (progress.downloaded / progress.total) * 100)}%`
-                          : "5%",
-                      }}
-                    />
-                  </div>
-                  <div className="progress-meta">
-                    <span>
-                      {progress.name} · {formatBytes(progress.downloaded)}
-                    </span>
-                    {progress.total && <span>{formatBytes(progress.total)}</span>}
-                  </div>
-                </>
-              )}
-              {parakeetErr && <div className="field-error">{parakeetErr}</div>}
+              <label>Model</label>
+              <input
+                type="text"
+                value={settings.stt_http_model}
+                onChange={(e) => update("stt_http_model", e.target.value)}
+                placeholder="phonon-2"
+              />
+              <div className="field-hint">
+                Start the server with <code>fermion serve phonon-2</code>. Any
+                OpenAI-compatible <code>/audio/transcriptions</code> server
+                works, local or on another machine.
+              </div>
             </div>
           </>
         )}

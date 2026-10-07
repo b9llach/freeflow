@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 use tauri::Manager;
 
@@ -22,8 +22,15 @@ pub struct Settings {
     pub llm_enabled: bool,
     pub vocabulary: Vec<String>,
     pub theme: Theme,
+    /// Which speech engine transcribes audio. Unknown values in old
+    /// settings files (for example "parakeet" from a removed backend) fall
+    /// back to Whisper instead of failing the whole file.
+    #[serde(deserialize_with = "lenient_backend")]
     pub stt_backend: SttBackend,
-    pub parakeet_model_dir: Option<PathBuf>,
+    /// Base URL of an OpenAI-compatible speech server, for example the one
+    /// started by `fermion serve phonon-2`.
+    pub stt_http_url: String,
+    pub stt_http_model: String,
     /// Human-readable cpal device name. `None` uses whatever cpal reports as
     /// the system default at recording time.
     pub input_device: Option<String>,
@@ -53,13 +60,27 @@ impl Default for Theme {
 #[serde(rename_all = "lowercase")]
 pub enum SttBackend {
     Whisper,
-    Parakeet,
+    Http,
 }
 
 impl Default for SttBackend {
     fn default() -> Self {
         SttBackend::Whisper
     }
+}
+
+fn lenient_backend<'de, D>(d: D) -> Result<SttBackend, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // Accept any JSON value so a stale or hand-edited file (null, a number,
+    // the removed "parakeet" backend) degrades to Whisper rather than
+    // failing the whole settings parse.
+    let raw = serde_json::Value::deserialize(d)?;
+    Ok(match raw.as_str() {
+        Some("http") => SttBackend::Http,
+        _ => SttBackend::Whisper,
+    })
 }
 
 impl Default for Settings {
@@ -79,7 +100,8 @@ impl Default for Settings {
             vocabulary: Vec::new(),
             theme: Theme::Dark,
             stt_backend: SttBackend::Whisper,
-            parakeet_model_dir: None,
+            stt_http_url: "http://127.0.0.1:8000/v1".into(),
+            stt_http_model: "phonon-2".into(),
             input_device: None,
         }
     }
@@ -137,4 +159,33 @@ pub fn save(app: &tauri::AppHandle, s: &Settings) -> crate::error::Result<()> {
     let json = serde_json::to_string_pretty(s)?;
     std::fs::write(path, json)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_backend_values_fall_back_to_whisper() {
+        for raw in [
+            r#"{"stt_backend":"parakeet"}"#,
+            r#"{"stt_backend":null}"#,
+            r#"{"stt_backend":5}"#,
+            r#"{}"#,
+        ] {
+            let s: Settings = serde_json::from_str(raw).unwrap();
+            assert_eq!(s.stt_backend, SttBackend::Whisper, "{raw}");
+        }
+        let s: Settings = serde_json::from_str(r#"{"stt_backend":"http"}"#).unwrap();
+        assert_eq!(s.stt_backend, SttBackend::Http);
+    }
+
+    #[test]
+    fn legacy_parakeet_fields_do_not_break_loading() {
+        let raw = r#"{"theme":"light","stt_backend":"parakeet","parakeet_model_dir":"C:/models/p","hotkey":"ControlLeft"}"#;
+        let s: Settings = serde_json::from_str(raw).unwrap();
+        assert_eq!(s.hotkey, "ControlLeft");
+        assert_eq!(s.theme, Theme::Light);
+        assert_eq!(s.stt_http_model, "phonon-2");
+    }
 }
