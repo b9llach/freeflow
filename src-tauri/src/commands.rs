@@ -145,7 +145,7 @@ pub fn phonon_runtime(app: &AppHandle) -> Arc<crate::phonon::Runtime> {
         .app_local_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir())
         .join("phonon");
-    crate::phonon::Runtime::init(base, crate::phonon::DEFAULT_PORT)
+    crate::phonon::Runtime::init(base)
 }
 
 #[tauri::command]

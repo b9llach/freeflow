@@ -15,7 +15,7 @@ pub struct ManagedStt {
 
 impl ManagedStt {
     pub fn new(runtime: Arc<Runtime>) -> Self {
-        let inner = HttpStt::new(runtime.base_url(), phonon::MODEL);
+        let inner = HttpStt::new(runtime.base_url(), phonon::MODEL).with_api_key(runtime.api_key());
         Self { runtime, inner }
     }
 }

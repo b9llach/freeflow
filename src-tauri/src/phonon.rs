@@ -23,9 +23,21 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub const MODEL: &str = "phonon-2";
-/// Private port for the managed server, chosen to stay clear of the usual
-/// 8000 that a hand-started `fermion serve` uses.
-pub const DEFAULT_PORT: u16 = 18_765;
+
+/// A free loopback port, picked fresh for every Freeflow launch.
+fn pick_port() -> u16 {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .unwrap_or(18_765)
+}
+
+/// Random per-launch secret. The server is started with it as its API key, so
+/// other local processes cannot use it, and Freeflow does not hand audio to
+/// anything that cannot prove it holds the key.
+fn make_key() -> String {
+    format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
+}
 
 const UV_VERSION: &str = "0.12.23";
 
@@ -83,13 +95,15 @@ fn emit(
     }
 }
 
-/// (asset file name, is_zip) for the uv release that matches this machine.
-fn uv_asset() -> Result<(&'static str, bool)> {
+/// (asset file name, is_zip, sha256) for the uv release that matches this
+/// machine. The digests are pinned here, like the CPython ones, so integrity
+/// does not depend on the channel the archive is downloaded over.
+fn uv_asset() -> Result<(&'static str, bool, &'static str)> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", "x86_64") => Ok(("uv-x86_64-pc-windows-msvc.zip", true)),
-        ("windows", "aarch64") => Ok(("uv-aarch64-pc-windows-msvc.zip", true)),
-        ("macos", "aarch64") => Ok(("uv-aarch64-apple-darwin.tar.gz", false)),
-        ("macos", "x86_64") => Ok(("uv-x86_64-apple-darwin.tar.gz", false)),
+        ("windows", "x86_64") => Ok(("uv-x86_64-pc-windows-msvc.zip", true, "75d05de6762778c31ee183398de7dd15093fad0ed90b1f236d8205ea5ec00c90")),
+        ("windows", "aarch64") => Ok(("uv-aarch64-pc-windows-msvc.zip", true, "13294e232ececbe709c06b74e6ced06f2a225ea5591476685362f22be56a50d5")),
+        ("macos", "aarch64") => Ok(("uv-aarch64-apple-darwin.tar.gz", false, "50487ae565ccd96e499056b4674d438f4c53170202617b4c759defe0c6a1b544")),
+        ("macos", "x86_64") => Ok(("uv-x86_64-apple-darwin.tar.gz", false, "960da44cb4b73685206ddd250b19e0a117fa41095710c1038f081f5cb613efb4")),
         (os, arch) => bail!("automatic Phonon-2 setup is not supported on {os} {arch}"),
     }
 }
@@ -177,6 +191,7 @@ mod job {
 pub struct Runtime {
     base: PathBuf,
     port: u16,
+    api_key: String,
     client: reqwest::Client,
     child: Mutex<Option<std::process::Child>>,
     #[cfg(windows)]
@@ -187,10 +202,11 @@ pub struct Runtime {
 static GLOBAL: OnceLock<Arc<Runtime>> = OnceLock::new();
 
 impl Runtime {
-    pub fn new(base: PathBuf, port: u16) -> Runtime {
+    pub fn new(base: PathBuf) -> Runtime {
         Runtime {
             base,
-            port,
+            port: pick_port(),
+            api_key: make_key(),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(1))
                 .timeout(Duration::from_secs(3))
@@ -204,9 +220,9 @@ impl Runtime {
     }
 
     /// Process-wide instance, so the exit hook can stop the server.
-    pub fn init(base: PathBuf, port: u16) -> Arc<Runtime> {
+    pub fn init(base: PathBuf) -> Arc<Runtime> {
         GLOBAL
-            .get_or_init(|| Arc::new(Runtime::new(base, port)))
+            .get_or_init(|| Arc::new(Runtime::new(base)))
             .clone()
     }
 
@@ -218,8 +234,12 @@ impl Runtime {
         format!("http://127.0.0.1:{}/v1", self.port)
     }
 
-    fn health_url(&self) -> String {
-        format!("http://127.0.0.1:{}/health", self.port)
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    fn probe_url(&self) -> String {
+        format!("http://127.0.0.1:{}/v1/models", self.port)
     }
 
     fn uv_exe(&self) -> PathBuf {
@@ -274,18 +294,31 @@ impl Runtime {
         }
     }
 
-    /// True when something on our port answers `/health` as a speech server.
+    /// True when the server answers an authenticated `/v1/models`. Only a
+    /// server started with this launch's key can pass.
     pub async fn healthy(&self) -> bool {
-        let Ok(resp) = self.client.get(self.health_url()).send().await else {
-            return false;
-        };
-        if !resp.status().is_success() {
-            return false;
-        }
-        match resp.json::<serde_json::Value>().await {
-            Ok(v) => v["kind"] == "speech",
+        match self
+            .client
+            .get(self.probe_url())
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+        {
+            Ok(r) => r.status().is_success(),
             Err(_) => false,
         }
+    }
+
+    /// Healthy and answered by the process Freeflow spawned (still alive).
+    async fn owned_healthy(&self) -> bool {
+        let alive = {
+            let mut g = self.child.lock();
+            match g.as_mut() {
+                Some(c) => matches!(c.try_wait(), Ok(None)),
+                None => false,
+            }
+        };
+        alive && self.healthy().await
     }
 
     // ---- install ----------------------------------------------------------
@@ -324,7 +357,7 @@ impl Runtime {
         if self.uv_exe().is_file() {
             return Ok(());
         }
-        let (asset, is_zip) = uv_asset()?;
+        let (asset, is_zip, sha) = uv_asset()?;
         let url =
             format!("https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{asset}");
         let bin = self.base.join("bin");
@@ -332,9 +365,8 @@ impl Runtime {
         let archive = bin.join(asset);
 
         emit(p, "uv", "Downloading the Python package tool", None, Some(0.0));
-        let expected = fetch_sha256(&format!("{url}.sha256")).await?;
         let p2 = p.clone();
-        download_verified(&url, &archive, &expected, move |pct| {
+        download_verified(&url, &archive, sha, move |pct| {
             emit(
                 &p2,
                 "uv",
@@ -498,12 +530,11 @@ impl Runtime {
 
     // ---- run --------------------------------------------------------------
 
-    /// Start the server and wait until `/health` answers. If something
-    /// already serves our port (for example the app crashed last time and the
-    /// server survived) it is adopted instead of started twice.
+    /// Start the server and wait until it answers with this launch's key.
+    /// A listener that was not spawned here is never adopted.
     pub async fn start(&self, p: &Option<ProgressFn>, timeout: Duration) -> Result<()> {
         let _guard = self.start_lock.lock().await;
-        if self.healthy().await {
+        if self.owned_healthy().await {
             return Ok(());
         }
         let fermion = self.fermion_exe();
@@ -516,6 +547,8 @@ impl Runtime {
         let log_err = log.try_clone()?;
         let mut cmd = std::process::Command::new(&fermion);
         cmd.args(["serve", MODEL, "--host", "127.0.0.1", "--port", &self.port.to_string()])
+            .arg("--api-key")
+            .arg(&self.api_key)
             .current_dir(&self.base)
             .env("FERMION_CACHE_DIR", self.base.join("cache"))
             .env("PYTHONUTF8", "1")
@@ -552,7 +585,7 @@ impl Runtime {
 
         let started = Instant::now();
         loop {
-            if self.healthy().await {
+            if self.owned_healthy().await {
                 return Ok(());
             }
             let exited = {
@@ -584,7 +617,7 @@ impl Runtime {
     /// Cheap check used before every transcription: the server is normally
     /// already healthy, and if it died it is started again.
     pub async fn ensure_running(&self) -> Result<()> {
-        if self.healthy().await {
+        if self.owned_healthy().await {
             return Ok(());
         }
         if !self.is_installed() {
@@ -674,27 +707,6 @@ async fn pump<R: tokio::io::AsyncRead + Unpin>(
         }
         emit(&p, stage, message.clone(), Some(line), None);
     }
-}
-
-async fn fetch_sha256(url: &str) -> Result<String> {
-    let text = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(30))
-        .build()?
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
-    let token = text
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| anyhow!("empty checksum file at {url}"))?;
-    if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("unexpected checksum format at {url}");
-    }
-    Ok(token.to_ascii_lowercase())
 }
 
 async fn download_verified(

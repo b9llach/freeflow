@@ -16,6 +16,7 @@ use super::SttEngine;
 pub struct HttpStt {
     base_url: String,
     model: String,
+    api_key: Option<String>,
     client: reqwest::Client,
 }
 
@@ -29,8 +30,14 @@ impl HttpStt {
         Self {
             base_url: base_url.into(),
             model: model.into(),
+            api_key: None,
             client,
         }
+    }
+
+    pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
+        self.api_key = Some(key.into());
+        self
     }
 }
 
@@ -119,10 +126,11 @@ impl SttEngine for HttpStt {
             .part("file", part)
             .text("model", self.model.clone());
 
-        let resp = self
-            .client
-            .post(url)
-            .multipart(form)
+        let mut req = self.client.post(url).multipart(form);
+        if let Some(key) = &self.api_key {
+            req = req.bearer_auth(key);
+        }
+        let resp = req
             .send()
             .await
             .map_err(|e| {
